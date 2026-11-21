@@ -1,0 +1,3 @@
+# Exported simulation data (tens of MB each); re-create it with export_data.py
+data/
+__pycache__/

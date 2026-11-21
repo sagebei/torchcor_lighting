@@ -221,3 +221,36 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# TorchCor Lighting
+# Local checkout of the TorchCor library (a separate repository, for reference only).
+/torchcor/
+# The PyInstaller spec is source, not a generated file (see "*.spec" above).
+!packaging/*.spec
+# Release archives (built into dist/, ignored above).
+*.dmg
+
+# Simulation data and results: meshes, fields and states are large and belong to
+# the user's data and output folders, never to the repository.
+*.pts
+*.elem
+*.lon
+*.vtx
+*.surf
+*.pt
+*.pth
+*.npz
+*.npy
+*.h5
+*.vtk
+*.vtu
+*.vtp
+*.pvd
+
+# Editors and the OS.
+.idea/
+.vscode/
+.claude/settings.local.json
+.DS_Store
+._*
+Thumbs.db

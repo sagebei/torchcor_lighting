@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=TorchCor Lighting
+GenericName=Cardiac Simulation Studio
+Comment=Set up, run and explore GPU cardiac simulations with TorchCor
+Exec=torchcor-lighting
+TryExec=torchcor-lighting
+Icon=torchcor-lighting
+Terminal=false
+Categories=Science;MedicalSoftware;Biology;Qt;
+Keywords=cardiac;heart;electrophysiology;ECG;mechanics;simulation;GPU;TorchCor;
+StartupNotify=true
+StartupWMClass=torchcor-lighting
