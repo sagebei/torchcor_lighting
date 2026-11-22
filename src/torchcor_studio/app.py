@@ -88,8 +88,13 @@ def leave(code: int) -> NoReturn:
     sys.stderr.flush()
     if os.name == "nt":
         import ctypes
+        from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32
+        # Typed: GetCurrentProcess's pseudo-handle (-1) must reach TerminateProcess as a
+        # 64-bit HANDLE, not ctypes' default 32-bit int (an invalid handle: the call fails).
+        kernel32 = ctypes.WinDLL("kernel32")
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
         kernel32.TerminateProcess(kernel32.GetCurrentProcess(), code)
     os._exit(code)
 

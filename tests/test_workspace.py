@@ -133,16 +133,20 @@ def test_the_new_menu_starts_a_simulation_of_the_kind_chosen(window, qtbot, monk
 
     from torchcor_studio.ui import new_menu
 
-    centre = button.mapToGlobal(button.rect().center())
-    pointer = [centre]  # where New sees the pointer: not every CI machine lets a test move the real one
-    monkeypatch.setattr(new_menu, "QCursor", type("Pointer", (), {"pos": staticmethod(lambda: pointer[0])}))
+    def on_new() -> QPoint:  # New's centre now: the sidebar may still be laying out
+        return button.mapToGlobal(button.rect().center())
+
+    # Where New sees the pointer: not every CI machine lets a test move the real one.
+    pointer = [on_new]
+    monkeypatch.setattr(new_menu, "QCursor", type("Pointer", (), {"pos": staticmethod(lambda: pointer[0]())}))
     # The menus above closed wherever the platform left the pointer (on New, it would keep the
     # button from reopening): a pointer that comes to rest on New has left it first.
     QApplication.sendEvent(button, QEvent(QEvent.Type.Leave))
-    QApplication.sendEvent(button, QEnterEvent(QPointF(button.rect().center()), QPointF(centre), QPointF(centre)))
+    centre = QPointF(on_new())
+    QApplication.sendEvent(button, QEnterEvent(QPointF(button.rect().center()), centre, centre))
     qtbot.waitUntil(menu.isVisible, timeout=3000)  # the pointer rests on New: the menu opens...
-    away = QPoint(centre.x() + 900, centre.y() + 600)
-    pointer[0] = away  # ...and closes once the pointer has gone elsewhere
+    away = on_new() + QPoint(900, 600)
+    pointer[0] = lambda: away  # ...and closes once the pointer has gone elsewhere
     QApplication.sendEvent(menu, QMouseEvent(QEvent.Type.MouseMove, QPointF(menu.mapFromGlobal(away)),
                                              QPointF(away), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
                                              Qt.KeyboardModifier.NoModifier))
