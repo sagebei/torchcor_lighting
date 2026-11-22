@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,14 @@ def _record(name: str, project: Project | None = None, *, state: RunState = RunS
     if project is not None:
         manifest["project"] = project.ref()
     return RunRecord(id=name, name=name, kind="ep", machine_id=machine, run_dir=f"{root}/{name}",
-                     created_at=time.time() - age_h * 3600, status=RunStatus(state=state), manifest=manifest)
+                     created_at=_earlier_today(age_h), status=RunStatus(state=state), manifest=manifest)
+
+
+def _earlier_today(hours: float) -> float:
+    """A time that many hours ago, squeezed into the part of today gone by so the sidebar
+    files it under Today at any time of day (just after midnight too); ages keep their order."""
+    now = time.time()
+    return now - (now - datetime.combine(date.today(), datetime.min.time()).timestamp()) * hours / 24
 
 
 def test_history_keeps_projects_and_adopts_them_from_manifests(tmp_path: Path) -> None:

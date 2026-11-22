@@ -33,7 +33,10 @@ _CHUNK = 1 << 20
 # ============================================================================ errors
 @cache
 def _error_class(base: type[OSError]) -> type[MachineError]:
-    return type(f"Machine{base.__name__}", (MachineError, base), {"__module__": __name__})
+    # str() is the message as written ("reason: path"), not OSError's "[Errno 2] ...: 'path'",
+    # which quotes the path and doubles every backslash of a Windows one.
+    return type(f"Machine{base.__name__}", (MachineError, base),
+                {"__module__": __name__, "__str__": BaseException.__str__})
 
 
 def machine_os_error(exc: OSError, path: str = "") -> MachineError:

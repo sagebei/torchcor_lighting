@@ -74,6 +74,12 @@ class Handler(SimpleHTTPRequestHandler):
             self._left -= len(chunk)
 
 
+class Server(ThreadingHTTPServer):
+    # A page load opens many connections at once; with the default queue of 5,
+    # some are reset and the page can come up without its stylesheet.
+    request_queue_size = 128
+
+
 def lan_ip():
     """This computer's address on the local network (no packets are sent)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -88,7 +94,7 @@ def lan_ip():
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    with ThreadingHTTPServer(("0.0.0.0", port), partial(Handler, directory=str(ROOT))) as httpd:
+    with Server(("0.0.0.0", port), partial(Handler, directory=str(ROOT))) as httpd:
         print(f"Serving {ROOT}")
         print(f"  on your network:  http://{lan_ip()}:{port}/")
         print(f"  on this computer: http://localhost:{port}/")

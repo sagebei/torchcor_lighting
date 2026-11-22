@@ -213,6 +213,7 @@ def _synthetic_torso(data: Path, h: float = 4.0) -> None:
 
 @pytest.fixture(scope="module")
 def prepared_torso(tmp_path_factory) -> Path:
+    pytest.importorskip("scipy", reason="preparing the torso needs scipy, as on a compute machine")
     data = tmp_path_factory.mktemp("kcl")
     _synthetic_torso(data)
     with redirect_stdout(io.StringIO()):

@@ -56,7 +56,7 @@ class ThemeManager(QObject):
         # Custom-painted widgets read the palette in paintEvent; repaint them all here so
         # they need no signal connection (a lambda would outlive a deleted widget).
         for widget in app.allWidgets():
-            widget.update()
+            QWidget.update(widget)  # item views overload update(index) and, in PySide6 6.9, hide this one
 
     @property
     def is_dark(self) -> bool:

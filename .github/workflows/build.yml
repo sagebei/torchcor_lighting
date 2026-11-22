@@ -34,7 +34,7 @@ jobs:
             # Hosted Windows runners have no OpenGL 3.2 driver: skip the VTK render check.
             build-args: --no-render
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
           - name: macOS x64
             # The last Intel image (macos-13 was retired in December 2025).
             os: macos-15-intel
@@ -50,11 +50,13 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          # 3.12+: the bundled Python. PySide6 6.12's Linux wheels drop a reference to None on
+          # every void call, which Python 3.11 (None not yet immortal) aborts on after a while.
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
 
@@ -86,11 +88,15 @@ jobs:
           python -m pip list
 
       - name: Run the tests
+        env:
+          # Hosted Windows runners have no OpenGL: the offscreen VTK render crashes there.
+          TCS_DISABLE_3D: ${{ runner.os == 'Windows' && '1' || '' }}
         run: |
+          # -v names each test as it starts, so a crash shows which one; -rfE lists failures.
           if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a -s "-screen 0 1920x1080x24" python -m pytest -m "not slow" -q
+            xvfb-run -a -s "-screen 0 1920x1080x24" python -m pytest -m "not slow" -v -rfE
           else
-            python -m pytest -m "not slow" -q
+            python -m pytest -m "not slow" -v -rfE
           fi
 
       - name: Build, self-test and package the app
@@ -101,7 +107,7 @@ jobs:
             python packaging/build.py --archive ${{ matrix.build-args }}
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: TorchCor-Lighting-${{ runner.os }}-${{ runner.arch }}
           path: |
@@ -119,7 +125,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: TorchCor-Lighting-*
@@ -128,7 +134,7 @@ jobs:
       - name: List the release files
         run: ls -l dist
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true

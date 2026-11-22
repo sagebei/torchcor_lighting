@@ -132,6 +132,9 @@ def test_the_new_menu_starts_a_simulation_of_the_kind_chosen(window, qtbot) -> N
     assert mech.setup.kind == "mechanics" and mech.name() == "MECH" and mech.project_id() == project.id
 
     centre = button.mapToGlobal(button.rect().center())
+    # The menus above closed wherever the platform left the pointer (on New, it would keep the
+    # button from reopening): a pointer that comes to rest on New has left it first.
+    QApplication.sendEvent(button, QEvent(QEvent.Type.Leave))
     QCursor.setPos(centre)  # the pointer rests on New: the menu opens...
     QApplication.sendEvent(button, QEnterEvent(QPointF(button.rect().center()), QPointF(centre), QPointF(centre)))
     qtbot.waitUntil(menu.isVisible, timeout=3000)

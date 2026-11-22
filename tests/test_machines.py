@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import subprocess
 import sys
 import threading
@@ -15,6 +16,7 @@ import psutil
 import pytest
 from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
+from tests.fixtures.packages import TORCHCOR_READY
 
 from torchcor_studio.core import environment, secrets
 from torchcor_studio.core.machines import create_machine
@@ -29,6 +31,9 @@ from torchcor_studio.core.machines.local import LocalMachine, machine_os_error, 
 from torchcor_studio.core.models import CommandResult, MachineKind, MachineProfile
 from torchcor_studio.core.paths import cache_dir
 from torchcor_studio.runtime import RUNTIME_FILES, runtime_path
+
+#: These probe this Python for a ready TorchCor environment: torch and TorchCor installed.
+needs_torchcor = pytest.mark.skipif(not TORCHCOR_READY, reason="needs torch and TorchCor in this Python")
 
 POSIX = os.name != "nt"
 
@@ -234,6 +239,7 @@ def test_runtime_is_deployed_by_content_hash(local):
     assert (folder / RUNTIME_FILES[0]).stat().st_mtime_ns == stamp  # not rewritten
 
 
+@needs_torchcor
 def test_runtime_probe_with_the_real_python():
     machine = LocalMachine(MachineProfile(name="local", python=sys.executable))
     report = machine.probe_environment()
@@ -273,6 +279,7 @@ def test_detect_python(local):
     assert len({os.path.dirname(c) for c in candidates}) == len(candidates)
 
 
+@needs_torchcor
 def test_find_pythons_local_is_fast(local):
     started = time.monotonic()
     found = environment.find_pythons(local)
@@ -318,6 +325,9 @@ class RecordingMachine(LocalMachine):
 
     def expand(self, path):
         return path.replace("~", "/home/u", 1)
+
+    def join(self, *parts):  # a remote (POSIX) machine, whatever this computer is
+        return posixpath.join(*parts)
 
     def stream(self, argv, on_line, stop, *, env=None):
         self.streams.append((list(argv), env))
@@ -367,6 +377,7 @@ def test_create_venv():
     assert environment.default_venv_path(machine) == "/home/u/.torchcor-studio/venv"
 
 
+@needs_torchcor
 def test_check_machine_local(local):
     report = environment.check_machine(local)
     assert report.ok and report.hostname and report.os

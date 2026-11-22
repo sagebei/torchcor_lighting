@@ -19,6 +19,7 @@ import paramiko
 import pytest
 from keyring.backend import KeyringBackend
 from paramiko import SFTPAttributes, SFTPHandle, SFTPServer, SFTPServerInterface
+from tests.fixtures.packages import TORCHCOR_READY
 
 from torchcor_studio.core import environment, secrets
 from torchcor_studio.core.machines import create_machine, sshconfig
@@ -77,6 +78,13 @@ def _sh(command: str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True, timeout=30, **kwargs)
 
 
+def _matching(pattern: str) -> list[str]:
+    """PIDs of the processes whose command line holds ``pattern``. The bracket keeps the
+    shell that runs pgrep, whose own command line holds the pattern, from matching (Linux's
+    pgrep lists it; macOS's leaves out its ancestors)."""
+    return _sh(f"pgrep -f '[{pattern[0]}]{pattern[1:]}' || true").stdout.split()
+
+
 # ============================================================================ commands
 def test_build_command_quotes_every_word():
     argv = [sys.executable, "-c", "import sys; print(sys.argv[1:])", "a b", "it's", "$HOME", "`x`", "*"]
@@ -110,12 +118,12 @@ def test_kill_and_alive_scripts_handle_process_trees():
     proc = subprocess.Popen(["sh", "-c", f"{sleeper} & {sleeper}; true"])
     try:
         time.sleep(0.3)
-        assert _sh(f"pgrep -f {marker}").stdout.split()  # the tree is running
+        assert _matching(marker)  # the tree is running
         assert _sh(alive_script(proc.pid)).returncode == 0
         assert _sh(kill_tree_script(proc.pid, grace_s=2)).returncode == 0
         proc.wait(timeout=10)
         time.sleep(0.2)
-        assert _sh(f"pgrep -f {marker} || true").stdout.strip() == ""
+        assert _matching(marker) == []
         assert _sh(alive_script(proc.pid)).returncode != 0
     finally:
         if proc.poll() is None:
@@ -586,7 +594,7 @@ def test_stream_and_stop_over_ssh(remote):
     code = remote.stream(["sh", "-c", f"while true; do echo {marker}; sleep 0.05; done"], on_tick, stop)
     assert code == -1 and time.monotonic() - started < 10
     time.sleep(0.5)
-    assert _sh(f"pgrep -f 'echo {marker}' || true").stdout.strip() == ""  # remote loop was killed
+    assert _matching(f"echo {marker}") == []  # remote loop was killed
 
 
 def test_sftp_file_operations(server, remote):
@@ -686,7 +694,7 @@ def test_runtime_python_and_processes_over_ssh(server, remote):
     assert folder == f"{server.home}/.cache/torchcor-studio/runtime/{runtime_digest()}"
     assert sorted(os.listdir(folder)) == ["tcs_runtime.py", "tcs_studio.py"]
     report = remote.probe_environment()
-    assert report.error is None and report.ready
+    assert report.error is None and report.ready == TORCHCOR_READY  # ready: torch and TorchCor
     proc = subprocess.Popen(["sleep", "60"])
     try:
         assert remote.is_alive(proc.pid)
