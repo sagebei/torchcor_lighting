@@ -1,4 +1,4 @@
-; Inno Setup script for TorchCor-Lighting-<version>-windows-<arch>-setup.exe.
+; Inno Setup script for TorchCor-Lighting-windows-<arch>-setup.exe.
 ;
 ; Compiled by `python packaging/build.py --archive` on Windows, which passes the values
 ; below with /D (from packaging/appinfo.py and the PyInstaller bundle in dist/).

@@ -18,14 +18,15 @@ back as interactive views. The app itself never needs PyTorch.
 ## Install
 
 Download the file for your computer from the
-[releases](https://github.com/sagebei/torchcor_lighting/releases):
+[latest release](https://github.com/sagebei/torchcor_lighting/releases/latest) (the file
+names stay the same from one version to the next):
 
 | Computer | File | Then |
 |---|---|---|
-| Windows 10 or 11 | `TorchCor-Lighting-<version>-windows-x64-setup.exe` | Run it. It asks whether to install for you only (no administrator rights needed) or for all users. |
-| Ubuntu 22.04 or newer, Debian 12 or newer | `TorchCor-Lighting-<version>-linux-x86_64.deb` | `sudo apt install ./TorchCor-Lighting-<version>-linux-x86_64.deb` |
-| Mac with Apple silicon | `TorchCor-Lighting-<version>-macos-arm64.dmg` | Open it and drag the app to Applications. |
-| Mac with an Intel processor | `TorchCor-Lighting-<version>-macos-x86_64.dmg` | Open it and drag the app to Applications. |
+| Windows 10 or 11 | `TorchCor-Lighting-windows-x64-setup.exe` | Run it. It asks whether to install for you only (no administrator rights needed) or for all users. |
+| Ubuntu 22.04 or newer, Debian 12 or newer | `TorchCor-Lighting-linux-x86_64.deb` | `sudo apt install ./TorchCor-Lighting-linux-x86_64.deb` |
+| Mac with Apple silicon | `TorchCor-Lighting-macos-arm64.dmg` | Open it and drag the app to Applications. |
+| Mac with an Intel processor | `TorchCor-Lighting-macos-x86_64.dmg` | Open it and drag the app to Applications. |
 
 Portable copies need no installation: unzip the Windows `.zip` and run `TorchCor Lighting.exe`,
 or unpack the Linux `.tar.gz` and run `./torchcor-lighting` (`./install.sh` adds a menu entry).

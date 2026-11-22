@@ -2,9 +2,10 @@
 (() => {
   'use strict';
 
-  // Every download is the newest app release on GitHub: its files, version and sizes come
-  // from the GitHub API; until it answers (or if it cannot), the links open that release's
-  // page (/releases/latest, which the build workflow keeps on the newest app release).
+  // Every download is the newest app release on GitHub. Its files have the same names in
+  // every release, so /releases/latest/download/<name> downloads the newest one directly
+  // (the build workflow keeps "latest" on the newest app release); the GitHub API adds the
+  // version, date and sizes when it answers.
   const REPO = 'sagebei/torchcor_lighting';
   const GH = `https://github.com/${REPO}`;
   const FILES = {
@@ -51,8 +52,8 @@
 
   function link(key, checksum) {
     const a = release.assets[key];
-    if (!a) return release.page;
-    return checksum ? a.sha || release.page : a.url;
+    if (a) return checksum ? a.sha || release.page : a.url;
+    return `${GH}/releases/latest/download/TorchCor-Lighting-${key}${checksum ? '.sha256' : ''}`;
   }
 
   function render() {
@@ -128,7 +129,7 @@
         res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, {
           headers: { Accept: 'application/vnd.github+json' },
         });
-      } catch (e) { return; } // offline: the links keep opening the latest release's page
+      } catch (e) { return; } // offline: the direct links to the latest files stay
       if (!res.ok) return; // private, or rate-limited (60 requests an hour): the same
       const list = await res.json();
       const j = (Array.isArray(list) ? list : []).find(

@@ -147,8 +147,10 @@ def os_tag() -> str:
 
 
 def artifact_stem() -> str:
-    """``TorchCor-Lighting-0.1.0-macos-arm64`` (extension added by the archiver)."""
-    return f"TorchCor-Lighting-{version()}-{os_tag()}-{arch()}"
+    """``TorchCor-Lighting-macos-arm64`` (extension added by the archiver). No version: the
+    same name in every release keeps ``/releases/latest/download/<name>`` a direct link to
+    the newest file, which the website's buttons use (the release itself is versioned)."""
+    return f"TorchCor-Lighting-{os_tag()}-{arch()}"
 
 
 def bundle_layout(dist: Path) -> dict[str, Path]:

@@ -9,13 +9,14 @@ Run it with the Python environment that has the app's dependencies and PyInstall
 (``pip install -e ".[dev]"``) -- never one you would mind seeing frozen: torch and
 torchcor are refused, everything else that the app imports is bundled.
 
-Release files (``dist/``, each with a ``.sha256`` file):
+Release files (``dist/``, each with a ``.sha256`` file), named without the version so
+that every release has the same names (``appinfo.artifact_stem``):
 
-* macOS    ``TorchCor-Lighting-<version>-macos-<arch>.dmg``  (zip when hdiutil fails)
-* Windows  ``TorchCor-Lighting-<version>-windows-<arch>-setup.exe`` (Inno Setup 6: for the
+* macOS    ``TorchCor-Lighting-macos-<arch>.dmg``  (zip when hdiutil fails)
+* Windows  ``TorchCor-Lighting-windows-<arch>-setup.exe`` (Inno Setup 6: for the
   current user without administrator rights, or for all users), and the same app as a
   portable ``.zip``
-* Linux    ``TorchCor-Lighting-<version>-linux-<arch>.deb`` (Debian / Ubuntu: installs to
+* Linux    ``TorchCor-Lighting-linux-<arch>.deb`` (Debian / Ubuntu: installs to
   /opt/torchcor-lighting with a menu entry and ``torchcor-lighting`` on the PATH), and
   a portable ``.tar.gz`` (with the .desktop file, the icon and ``install.sh``, which adds a
   menu entry for the current user)

@@ -29,18 +29,16 @@ export the data and regenerate them.
 ## Download links
 
 The site always offers the newest app release on GitHub, with nothing to update here when
-you release. The buttons are the release assets of `sagebei/torchcor_lighting`
-(`TorchCor-Lighting-<version>-<platform>`), as built by `.github/workflows/build.yml`: the
-macOS dmgs, the Windows installer (`-windows-x64-setup.exe`) and portable zip, and the
-Ubuntu/Debian `.deb` and `.tar.gz` for other Linux distributions.
+you release. The release files have the same names in every version
+(`TorchCor-Lighting-<platform>`, as built by `.github/workflows/build.yml`): the macOS dmgs,
+the Windows installer (`-windows-x64-setup.exe`) and portable zip, and the Ubuntu/Debian
+`.deb` and `.tar.gz` for other Linux distributions. So every button is a direct link,
+`/releases/latest/download/TorchCor-Lighting-<platform>`, which downloads the newest file
+without any lookup; the build workflow keeps "latest" on the newest app release, so
+publish demo data releases as pre-releases (or untick "Set as the latest release").
 
-On page load, `assets/js/main.js` asks the GitHub API for the newest app release (tagged
-`v1.2.3`; pre-releases and the demo data releases, `data-v1.0`, are skipped) and fills in
-its version, date, file links and sizes (cached for 10 minutes). Until it answers, or if it
-cannot (offline, or GitHub's limit of 60 requests an hour), the buttons open the release
-page at `/releases/latest`, from which every file can be downloaded. No version is written
-into the pages.
-
-That page must be the app's: the build workflow marks each app release as the latest, so
-publish demo data releases as pre-releases (or untick "Set as the latest release"). The
-repository must be public for the API and the downloads to work.
+On page load, `assets/js/main.js` also asks the GitHub API for that release (tagged
+`v1.2.3`; pre-releases and the demo data releases, `data-v1.0`, are skipped) to show its
+version, date and file sizes (cached for 10 minutes). Without an answer (offline, or
+GitHub's limit of 60 requests an hour) the page says "Latest version" and the links work
+all the same. The repository must be public for visitors to download.
