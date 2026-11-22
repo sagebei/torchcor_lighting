@@ -135,7 +135,14 @@ def test_runs_are_filed_in_their_folder_on_disk(themed, qtbot, tmp_path: Path) -
     project = ctx.create_project("Atrial study")
     assert ctx.create_project("atrial STUDY ") is project and len(ctx.projects()) == 1  # no twins
     ctx.move_to_project([record], project.id)
-    on_disk = lambda: json.loads((run_dir / "manifest.json").read_text()).get("project")  # noqa: E731
+    def on_disk():
+        """The run's project as its manifest says. Windows cannot open the file at the moment
+        the app replaces it: an AssertionError makes waitUntil try again."""
+        try:
+            return json.loads((run_dir / "manifest.json").read_text()).get("project")
+        except PermissionError as exc:
+            raise AssertionError(exc) from exc
+
     qtbot.waitUntil(lambda: on_disk() == project.ref(), timeout=10000)
     assert ctx.records()[0].project_id == project.id
 
