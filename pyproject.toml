@@ -32,6 +32,9 @@ dependencies = [
     "pyvistaqt>=0.11",
     "numpy>=1.26",
     "paramiko>=3.4",
+    # paramiko's cryptography ships no Intel-Mac wheel from 49: pip would build it against a
+    # system OpenSSL that clashes with Python's own in the app bundle. 48 has a universal2 one.
+    "cryptography<49; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "keyring>=25",
     "platformdirs>=4.2",
     "pydantic>=2.6",
