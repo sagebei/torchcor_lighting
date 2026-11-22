@@ -44,6 +44,8 @@ class MachineProfile:
     #: Default folders on that machine.
     input_dir: str = ""
     output_dir: str = ""
+    #: Its demo data folder (``.../torchcor_data``, with ``input/`` and ``output/``); "" = ``~/torchcor_data``.
+    data_dir: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
     @property

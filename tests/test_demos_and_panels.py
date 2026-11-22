@@ -6,7 +6,6 @@ import re
 
 import pytest
 
-from torchcor_studio.core.models import InputInfo
 from torchcor_studio.core.simulations import SimulationKind, ecg, ep, get_spec, specs
 from torchcor_studio.core.simulations.fields import field_meta
 from torchcor_studio.core.simulations.panels import (
@@ -55,12 +54,11 @@ def test_demo_cases_name_a_kind_folder() -> None:
     for spec in specs():
         for demo in spec.demos:
             if demo.case is None:
-                assert not demo.download
                 continue
             kind, *rest = demo.case.split("/")
             assert kind == str(spec.kind) and len(rest) <= 1, demo.case  # "ep/ventricle" or "ecg"
     assert get_spec("ecg").demo("healthy").case == "ecg"  # the kind folder is the prepared data
-    assert get_spec("em").demo("five-beats").case == "em/heart"
+    assert get_spec("em").demo("five-beats").case == "em"  # its mesh files sit in input/em
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -84,15 +82,14 @@ def test_panels_claim_every_leaf_once(kind: str) -> None:
 def test_eyebrow_rules() -> None:
     cells = _panels("ep")["cells"]
     assert [(b.kind, b.eyebrow) for b in cells.blocks] == [("table", ""), ("fields", "Pre-pacing")]
-    geometry = _panels("ep")["geometry"]
-    assert [(b.kind, b.eyebrow) for b in geometry.blocks] == [
-        ("fields", ""), ("input", ""), ("fields", ""), ("output", "")]
+    geometry = _panels("ep")["geometry"]  # the input folder, how it is read, the output folder
+    assert [(b.kind, b.eyebrow) for b in geometry.blocks] == [("input", ""), ("fields", ""), ("output", "")]
     solver = _panels("ecg")["solver"]
     assert [b.eyebrow for b in solver.blocks] == ["Heart solve", "Lead fields"]
-    conduction = _panels("ecg")["conduction"]
-    assert [(b.kind, b.eyebrow) for b in conduction.blocks] == [
-        ("fields", ""), ("table", "Conductivities"), ("fields", "")]
-    assert conduction.blocks[1].caption.startswith("Heart conductivity per region")
+    models = _panels("ecg")["models"]
+    assert [(b.kind, b.eyebrow) for b in models.blocks] == [
+        ("fields", ""), ("table", "Conductivities"), ("table", "Conduction velocities"), ("fields", "")]
+    assert models.blocks[1].caption.startswith("Heart conductivity per region")
     em_cells = _panels("em")["cells-and-contraction"]  # cell models, then two forced eyebrows
     assert [(b.kind, b.eyebrow) for b in em_cells.blocks] == [
         ("fields", ""), ("fields", "Pre-pacing"), ("fields", "Land contraction")]
@@ -107,9 +104,8 @@ def test_input_role_per_demo() -> None:
     def role(kind: str, params) -> str:  # noqa: ANN001
         return get_spec(kind).input_role(params)[0]
 
-    assert role("ep", ep.slab()) == "unused" and role("ep", ep.ventricle()) == "required"
-    assert role("ecg", ecg.ECGParams()) == "optional"
-    assert role("ecg", ecg.ECGParams(data=ecg.ECGData(source="custom"))) == "required"
+    assert all(role("ep", d.params()) == "required" for d in get_spec("ep").demos)  # a mesh folder
+    assert role("ecg", ecg.ECGParams()) == "required"
     assert all(role("mechanics", d.params()) == "unused" for d in get_spec("mechanics").demos)
     assert all(role("em", d.params()) == "required" for d in get_spec("em").demos)
     assert role("script", get_spec("script").defaults()) == "optional"
@@ -185,21 +181,33 @@ def test_numbers_read_plainly() -> None:
 def test_input_folder_issues_point_at_the_slot() -> None:
     em, ecg_spec = get_spec("em"), get_spec("ecg")
     assert any(i.field == INPUT and i.severity == "error" for i in em.validate(em.defaults(), None))
-    custom = ecg.ECGParams(data=ecg.ECGData(source="custom"))
-    assert any(i.field == INPUT for i in ecg_spec.validate(custom, None))
+    assert any(i.field == INPUT for i in ecg_spec.validate(ecg.ECGParams(), None))
     assert all(i.field == INPUT for i in get_spec("ep").validate(ep.ventricle(), None)
-               if "openCARP mesh" in i.message)
+               if "mesh (.pts" in i.message)
 
 
-def test_kcl_download_is_said_once() -> None:
-    """With no input folder the slot's hint says where KCL torso 3 goes, not the checks; a
-    folder that is not the prepared model gets the one note that it is downloaded there."""
+def test_ecg_heart_ep_groups_three_panels() -> None:
+    from torchcor_studio.core.simulations.panels import Group, Panel, resolve
+
+    panels = _panels("ecg")
+    grouped = [key for key, panel in panels.items() if panel.group is not None]
+    assert grouped == ["cells", "models", "pacing-sites"]
+    assert {panels[key].group.title for key in grouped} == {"Heart EP"}
+    assert panels["models"].blocks[0].leaves[0] == ("heart", "solver")
     spec = get_spec("ecg")
-    assert not [i for i in spec.validate(spec.defaults(), None) if "downloaded" in i.message]
-    assert "~/TorchCorStudio/data/KCL_torso3" in spec.input_role(spec.defaults())[1]
-    elsewhere = InputInfo(path="/data/mine", exists=True, files=["notes.txt"])
-    notes = [i for i in spec.validate(spec.defaults(), elsewhere) if "downloaded" in i.message]
-    assert len(notes) == 1 and notes[0].field == INPUT and notes[0].severity == "info"
+    split = Group("Split", "heart")
+    with pytest.raises(ValueError, match="consecutive"):
+        resolve(spec.params_model, (Panel("A", "x", ("data",), group=split), Panel("B", "x", ("heart",)),
+                                    Panel("C", "x", ("conductor",), group=split)))
+
+
+def test_ecg_heart_and_torso_is_the_prepared_folder() -> None:
+    """No choice of model: the panel is the input folder, its parts and the output folder."""
+    spec = get_spec("ecg")
+    panel = next(p for p in spec.panels if p.title == "Heart and torso")
+    assert panel.paths[:2] == (INPUT, "data") and "data.source" not in panel.paths
+    assert "source" not in type(spec.defaults().data).model_fields
+    assert not any(demo.case is None for demo in spec.demos)  # each reads the prepared folder
 
 
 def test_owner_and_changes() -> None:

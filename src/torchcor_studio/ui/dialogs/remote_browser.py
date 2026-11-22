@@ -80,7 +80,7 @@ def relative_time(mtime: float, now: float | None = None) -> str:
 
 
 def mesh_summary(entries: list[FileEntry]) -> str | None:
-    """Describe the openCARP mesh(es) in a listing (``.pts`` + ``.elem``), if any."""
+    """Describe the mesh(es) in a listing (``.pts`` + ``.elem``), if any."""
     names = [e.name for e in entries if not e.is_dir]
     pts = {n[:-4] for n in names if n.lower().endswith(".pts")}
     elem = {n[:-5] for n in names if n.lower().endswith(".elem")}
@@ -88,7 +88,7 @@ def mesh_summary(entries: list[FileEntry]) -> str | None:
         return None
     both = sorted(pts & elem)
     if len(both) > 1:
-        return f"{len(both)} openCARP meshes"
+        return f"{len(both)} meshes"
     mesh = both[0] if both else sorted(pts)[0]
     extras = []
     if any(n.lower() == f"{mesh.lower()}.lon" for n in names):
@@ -96,7 +96,7 @@ def mesh_summary(entries: list[FileEntry]) -> str | None:
     vtx = sum(1 for n in names if n.lower().endswith(".vtx"))
     if vtx:
         extras.append(f"{vtx} .vtx")
-    return "openCARP mesh · " + " · ".join([mesh, *extras])
+    return "Mesh · " + " · ".join([mesh, *extras])
 
 
 # ============================================================================ path bar

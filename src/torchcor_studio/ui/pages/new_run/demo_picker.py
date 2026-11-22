@@ -27,8 +27,7 @@ from torchcor_studio.ui.widgets import Badge, Button, Card, WrapLabel, keep_toge
 COST = {Cost.SECONDS: "Seconds", Cost.MINUTES: "Minutes", Cost.HOURS: "Hours"}
 #: The icon and tone of a demo in the list, by where its data stands.
 LIST_ICON = {DataStatus.BUILT_IN: ("box", "neutral"), DataStatus.FOUND: ("folder", "success"),
-             DataStatus.DOWNLOAD: ("download", "info"), DataStatus.MISSING: ("alert", "warning"),
-             DataStatus.UNKNOWN: ("folder", "neutral")}
+             DataStatus.MISSING: ("alert", "warning"), DataStatus.UNKNOWN: ("folder", "neutral")}
 _STEPS = (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home,
           Qt.Key.Key_End)
 _CHORDS = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.AltModifier
@@ -43,12 +42,10 @@ def data_chip(demo: Demo, data: DemoData, machine: str) -> tuple[str, str, str |
         return "Built-in", "neutral", "box", False, "Needs no input folder."
     if data.status == DataStatus.FOUND:
         return case, "success", None, True, data.path
-    if data.status == DataStatus.DOWNLOAD:
-        return ("Auto-download", "info", "download", False,
-                f"{demo.data or 'Its data'} is downloaded on the first run, then reused.")
     if data.status == DataStatus.MISSING:
         return ("Needs data", "neutral", None, False,
-                f"This demo reads {data.path}, which is not on {where}. Copy TorchCor's demo data there.")
+                f"This demo reads {data.path}, which is not on {where}. Download the demo data in the "
+                "Compute step.")
     return case, "neutral", None, False, f"Checked when {where} connects."
 
 

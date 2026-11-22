@@ -2,7 +2,8 @@
 
 The header shows the panel's icon and title, a dot when it was edited, its one-line
 summary while collapsed, its issue count, an Advanced button and a chevron. A collapsed
-panel is built on its first opening.
+panel is built on its first opening. The panels of a :class:`Group` are sections of one
+:class:`PanelGroup` box instead of cards of their own.
 """
 
 from __future__ import annotations
@@ -13,12 +14,15 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QToolTip, QVBoxLayout, QWidget
 
-from torchcor_studio.core.simulations.panels import ResolvedPanel
+from torchcor_studio.core.simulations.panels import Group, ResolvedPanel
 from torchcor_studio.ui import icons
 from torchcor_studio.ui.theme import theme
-from torchcor_studio.ui.widgets import Button, chain_focus, tone_text
+from torchcor_studio.ui.widgets import Button, chain_focus, hairline, tone_text
 
 HEADER_H = 52
+#: The header of a panel inside a group: a step below the group's own.
+SECTION_H = 46
+TITLE_PX, SECTION_TITLE_PX = 14, 13
 
 
 class _Header(QWidget):
@@ -27,7 +31,7 @@ class _Header(QWidget):
     def __init__(self, card: PanelCard) -> None:
         super().__init__(card)
         self.card = card
-        self.setFixedHeight(HEADER_H)
+        self.setFixedHeight(SECTION_H if card.nested else HEADER_H)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.setAccessibleName(card.resolved.title)
@@ -50,7 +54,7 @@ class _Header(QWidget):
 
     def _fonts(self) -> tuple[QFont, QFont, QFont]:
         title = QFont(self.font())
-        title.setPixelSize(14)
+        title.setPixelSize(SECTION_TITLE_PX if self.card.nested else TITLE_PX)
         title.setWeight(QFont.Weight.DemiBold)
         small = QFont(self.font())
         small.setPixelSize(12)
@@ -177,6 +181,7 @@ class PanelCard(QFrame):
         super().__init__()
         self.resolved = resolved
         self.key = resolved.key
+        self.nested = resolved.group is not None  # a section of a PanelGroup, not a card
         self._build = build
         self._expanded = expanded
         self._body: QWidget | None = None
@@ -187,8 +192,9 @@ class PanelCard(QFrame):
         self.advanced_count = 0
         self.show_advanced = False
         self.advanced_button: Button | None = None
-        self.setProperty("card", "true")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        if not self.nested:
+            self.setProperty("card", "true")
+            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._lay.setSpacing(0)
@@ -296,3 +302,53 @@ class PanelCard(QFrame):
     def _advanced_clicked(self, on: bool) -> None:
         self.show_advanced = on
         self.advanced_toggled.emit(on)
+
+
+class _GroupHeader(QWidget):
+    """A group's painted title, its icon before it (it does not open or close: its panels do)."""
+
+    def __init__(self, group: Group) -> None:
+        super().__init__()
+        self.group = group
+        self.setFixedHeight(HEADER_H)
+        self.setAccessibleName(group.title)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = theme().palette
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.drawPixmap(16, int(self.height() / 2 - 8), icons.pixmap(self.group.icon, p.text2, 16))
+        font = QFont(self.font())
+        font.setPixelSize(TITLE_PX)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(p.qcolor("text"))
+        painter.drawText(QRectF(42, 0, max(0, self.width() - 58), self.height()),
+                         Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.group.title)
+
+
+class PanelGroup(QFrame):
+    """The box of a :class:`Group`: its header, then each of its panels as a section, under
+    a hairline inset like the panels' content."""
+
+    def __init__(self, group: Group) -> None:
+        super().__init__()
+        self.group = group
+        self.key = group.key
+        self.cards: list[PanelCard] = []
+        self.setProperty("card", "true")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(0)
+        self.header = _GroupHeader(group)
+        self._lay.addWidget(self.header)
+
+    def add(self, card: PanelCard) -> None:
+        rule = QWidget()
+        rule_lay = QHBoxLayout(rule)
+        rule_lay.setContentsMargins(16, 0, 16, 0)
+        rule_lay.addWidget(hairline())
+        self._lay.addWidget(rule)
+        self._lay.addWidget(card)
+        self.cards.append(card)

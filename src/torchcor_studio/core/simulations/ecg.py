@@ -1,8 +1,8 @@
 """12-lead ECG: ventricular electrophysiology on a heart-torso model, then lead fields.
 
-The default reproduces TorchCor's ``demo/ecg`` recipe on the KCL whole-torso model 3,
-which the script downloads from Zenodo and prepares on first use (into the input folder,
-or a per-user data folder on the compute machine when none is chosen).
+The model is a prepared heart-torso folder: the torso mesh, the ventricles cut out of it,
+pacing sites, electrodes and nodal heart coordinates. The defaults follow TorchCor's
+``demo/ecg`` recipe and the folder its ``demo_download.py`` prepares.
 """
 
 from __future__ import annotations
@@ -26,17 +26,17 @@ from torchcor_studio.core.simulations.common import (
     Conductivity,
     SolverSettings,
     Stimulus,
+    Velocity,
 )
 from torchcor_studio.core.simulations.fields import Section, param
-from torchcor_studio.core.simulations.panels import INPUT, OUTPUT, Panel
+from torchcor_studio.core.simulations.panels import INPUT, OUTPUT, Group, Panel
 
-SOURCES = {"kcl": "KCL torso 3", "custom": "Prepared folder"}
+#: How the activation spreads through the heart: TorchCor's Monodomain or ReactionEikonal.
+PROPAGATION = {"monodomain": "Monodomain", "eikonal": "Reaction–eikonal",
+               "re_plus": "Reaction–eikonal with diffusion"}
+#: The models that solve the diffusion (with conductivities), and the eikonal ones (with velocities).
+DIFFUSION, EIKONAL = ["monodomain", "re_plus"], ["eikonal", "re_plus"]
 KCL_FOLDER = "KCL_torso3"
-#: Where a run with no input folder downloads KCL torso 3 (on the compute machine).
-KCL_SHARED = "~/TorchCorStudio/data/KCL_torso3"
-KCL_SITES = ("LV_septal", "LV_anterior", "RV_septal", "RV_moderator")
-#: Region tags of the prepared KCL heart mesh: RV wall, LV wall, fast endocardial layer.
-KCL_HEART_REGIONS = (34, 35, 36)
 ELECTRODE_ORDER = "V1, V2, V3, V4, V5, V6, RA, LA, RL, LL"
 _VENTRICULAR = {name: m.label for name, m in CELL_MODELS.items() if m.cell_types}
 
@@ -53,27 +53,21 @@ STAGES = (
 
 # =============================================================================== parameters
 class ECGData(Section):
-    """The heart-torso model and where its parts are."""
+    """Where the parts of the prepared heart-torso model are in the input folder."""
 
-    source: str = param("kcl", "Model", choices=SOURCES, widget="segmented",
-                        help="KCL torso 3 (Zenodo 10.5281/zenodo.7253863, CC-BY-4.0) is "
-                             "downloaded and prepared on first use; or use your own prepared "
-                             "heart-torso folder.")
-    torso_mesh: str = param(KCL_FOLDER, "Torso mesh folder", visible_if={"source": "custom"},
-                            span=1, help="Sub-folder of the input folder with the full heart-torso mesh.")
-    heart_mesh: str = param("heart", "Heart mesh folder", visible_if={"source": "custom"},
-                            span=1, help="Sub-folder with the ventricles cut out of the torso mesh, in "
+    torso_mesh: str = param(KCL_FOLDER, "Torso mesh folder", span=1,
+                            help="Sub-folder of the input folder with the full heart-torso mesh.")
+    heart_mesh: str = param("heart", "Heart mesh folder", span=1,
+                            help="Sub-folder with the ventricles cut out of the torso mesh, in "
                                  "torso node order (as LeadField requires).")
-    pacing: str = param("pacing", "Pacing sites folder", visible_if={"source": "custom"},
-                        span=1, help="Sub-folder holding the stimulus .vtx files.")
-    electrodes: str = param("electrodes/lf_src.vtx", "Electrodes", visible_if={"source": "custom"},
-                            span=1, help="The 10 electrode nodes of the torso mesh, relative to the "
+    pacing: str = param("pacing", "Pacing sites folder", span=1,
+                        help="Sub-folder holding the stimulus .vtx files.")
+    electrodes: str = param("electrodes/lf_src.vtx", "Electrodes", span=1,
+                            help="The 10 electrode nodes of the torso mesh, relative to the "
                                  "input folder.")
-    electrode_order: str = param(ELECTRODE_ORDER, "Electrode order", advanced=True,
-                                 visible_if={"source": "custom"}, widget="mono",
+    electrode_order: str = param(ELECTRODE_ORDER, "Electrode order", advanced=True, widget="mono",
                                  help="Names of the electrodes in file order; RL is the ground.")
-    fields: str = param("fields.npz", "Heart coordinates", visible_if={"source": "custom"},
-                        advanced=True,
+    fields: str = param("fields.npz", "Heart coordinates", advanced=True,
                         help="npz with nodal apico-basal 'ab' and transmural 'tm' coordinates "
                              "for the repolarisation gradients; empty = none.")
 
@@ -95,24 +89,41 @@ class ECGHeart(Section):
                       help="Integration step of the EP solve.")
     sample_interval: float = param(1.0, "ECG sample interval", unit="ms", min=0.1, max=10.0,
                                    step=0.5, help="Time between Vm frames, i.e. ECG samples.")
+    solver: str = param("monodomain", "Propagation model", choices=PROPAGATION, widget="segmented",
+                        summary=True,
+                        help="Monodomain solves the diffusion every step. Reaction–eikonal times "
+                             "each cell from an eikonal activation map: much faster, but its cells "
+                             "are not coupled, so the ECG is less faithful. With diffusion, the "
+                             "cells fire at their eikonal times and stay coupled (a linear solve "
+                             "per step); give conductivities and velocities of the same speed.")
     conductivity_mode: str = param("monodomain", "Conductivity values",
                                    choices=common.CONDUCTIVITY_MODES,
+                                   visible_if={"solver": DIFFUSION},
                                    help="The KCL values are effective monodomain values tuned "
                                         "for its ~0.9 mm mesh.")
     conductivities: list[Conductivity] = param(
         title="Conductivities",
         default_factory=lambda: [Conductivity(regions=[34, 35], il=0.408, it=0.141),
                                  Conductivity(regions=[36], il=1.5, it=1.5)],
-        item="region group",
+        visible_if={"solver": DIFFUSION}, item="region group",
         help="Heart conductivity per region: walls 34/35 and the fast endocardial layer 36.")
+    velocities: list[Velocity] = param(
+        title="Conduction velocities",
+        # the walls as TorchCor's eikonal ventricle demo; the layer scaled from the walls by
+        # the square root of the conductivity ratio, sqrt(1.5 / 0.408)
+        default_factory=lambda: [Velocity(regions=[34, 35], vel_l=0.6, vel_t=0.38),
+                                 Velocity(regions=[36], vel_l=1.15, vel_t=1.15)],
+        visible_if={"solver": EIKONAL}, item="region group",
+        help="Eikonal conduction velocity per region: walls 34/35 and the fast endocardial "
+             "layer 36.")
     stimuli: list[Stimulus] = param(
-        title="Early activation sites",
+        title="Pacing sites",
         default_factory=lambda: [Stimulus(site=f"{site}.vtx", start=start, duration=1.0,
                                           intensity=100.0)
                                  for site, start in (("LV_septal", 0.0), ("LV_anterior", 0.0),
                                                      ("RV_septal", 10.0),
                                                      ("RV_moderator", 10.0))],
-        item="site", help="Durrer-type sites in the pacing folder.")
+        item="site", help="Durrer-type early activation sites in the pacing folder.")
     mass_lumping: bool = param(True, "Lumped mass matrix", advanced=True,
                                help="Row-sum the finite-element mass matrix (as the demo).")
 
@@ -186,7 +197,7 @@ class ECGOutputs(Section):
 class ECGParams(Section):
     """ECG parameters."""
 
-    data: ECGData = param(title="Heart and torso", default_factory=ECGData)
+    data: ECGData = param(title="In the input folder", default_factory=ECGData)
     heart: ECGHeart = param(title="Heart electrophysiology", default_factory=ECGHeart)
     conductor: VolumeConductor = param(title="Volume conductor", default_factory=VolumeConductor)
     numerics: SolverSettings = param(title="Numerics",
@@ -194,7 +205,8 @@ class ECGParams(Section):
     outputs: ECGOutputs = param(title="Outputs", default_factory=ECGOutputs)
 
     def variant_label(self) -> str:
-        return "12-lead · KCL torso 3" if self.data.source == "kcl" else "12-lead"
+        solver = self.heart.solver
+        return "12-lead" if solver == "monodomain" else f"12-lead · {PROPAGATION[solver].lower()}"
 
 
 # =============================================================================== demos
@@ -210,18 +222,21 @@ KCL_PREPARED = (KCL_FOLDER, "heart", "pacing", "electrodes")
 DEMOS = (
     Demo("healthy", "KCL torso 3, healthy beat",
          "A 12-lead ECG of one beat on a CT-based heart–torso model.", ECGParams, case="ecg",
-         requires=KCL_PREPARED, download=True, source="demo/ecg/demo_ecg.py", data="KCL torso 3"),
+         requires=KCL_PREPARED, source="demo/ecg/demo_ecg.py"),
     Demo("uniform", "KCL torso 3, no repolarisation gradients",
          "The same beat without the IKs and Ito gradients.", no_gradients, case="ecg",
-         requires=KCL_PREPARED, download=True, source="demo/ecg/demo_ecg.py", data="KCL torso 3"),
+         requires=KCL_PREPARED, source="demo/ecg/demo_ecg.py"),
 )
 
+HEART_EP = Group("Heart EP", "heart")
+
 PANELS = (
-    Panel("Heart and torso", "user", ("data.source", INPUT, "data", OUTPUT)),
-    Panel("Cells", "activity", ("heart.model", "heart.cell_type", "heart.heterogeneity")),
-    Panel("Conduction", "wave", ("heart.conductivity_mode", "heart.conductivities",
-                                 "heart.mass_lumping")),
-    Panel("Early activation", "zap", ("heart.stimuli",)),
+    Panel("Heart and torso", "user", (INPUT, "data", OUTPUT)),
+    Panel("Cells", "activity", ("heart.model", "heart.cell_type", "heart.heterogeneity"),
+          group=HEART_EP),
+    Panel("Models", "wave", ("heart.solver", "heart.conductivity_mode", "heart.conductivities",
+                             "heart.velocities", "heart.mass_lumping"), group=HEART_EP),
+    Panel("Pacing sites", "zap", ("heart.stimuli",), group=HEART_EP),
     Panel("Torso conductivities", "layers", (("conductor.torso", "Torso tissues"), "conductor.heart"),
           collapsed=True),
     Panel("Time and outputs", "clock", ("heart.duration", "heart.dt", "heart.sample_interval",
@@ -231,65 +246,46 @@ PANELS = (
 )
 
 
-def input_use(params: ECGParams) -> tuple[InputUse, str]:
-    if params.data.source == "kcl":  # the hint shows while the folder is empty
-        return "optional", (f"Empty: KCL torso 3 (122 MB) is downloaded into {KCL_SHARED} on the "
-                            "first run, then reused. Choose a folder to keep it elsewhere.")
+def input_use(_params: ECGParams) -> tuple[InputUse, str]:
     return "required", ("A prepared heart–torso folder: torso and heart meshes, pacing sites "
                         "and electrodes.")
 
 
 # =============================================================================== checks
-def _kcl_prepared(info: InputInfo) -> bool:
-    return set(KCL_PREPARED) <= set(info.subdirs) and "fields.npz" in info.files
-
-
 def check(params: ECGParams, info: InputInfo | None) -> list[Issue]:
     issues: list[Issue] = []
     data, heart = params.data, params.heart
-    known: list[int] | None = None
-    if data.source == "kcl":
-        known = list(KCL_HEART_REGIONS)
-        # an empty or new input folder says where the model goes; a folder with other
-        # files is not one the user would expect it in
-        if info is not None and info.exists and not _kcl_prepared(info):
-            issues.append(Issue(Severity.INFO, "KCL torso 3 (122 MB) will be downloaded into the "
-                                               "input folder and prepared there on the first run.",
-                                INPUT))
-        sites = {f"{s}.vtx" for s in KCL_SITES}
-        for i, stim in enumerate(heart.stimuli):
-            if stim.site not in sites:
-                issues.append(Issue(Severity.ERROR,
-                                    f"The KCL pacing sites are {', '.join(sorted(sites))}.",
-                                    f"heart.stimuli.{i}.site"))
+    if info is None or not info.exists:
+        issues.append(Issue(Severity.ERROR, "Choose the input folder with the prepared "
+                                            "heart–torso model.", INPUT))
     else:
-        if info is None or not info.exists:
-            issues.append(Issue(Severity.ERROR, "Choose the input folder with the prepared "
-                                                "heart–torso model.", INPUT))
-        else:
-            for field in ("torso_mesh", "heart_mesh", "pacing"):
-                folder = getattr(data, field).strip("/\\")
-                if folder.split("/")[0] not in info.subdirs:
-                    issues.append(Issue(Severity.ERROR, f"The input folder has no '{folder}' "
-                                                        "sub-folder.", f"data.{field}"))
-            top = data.electrodes.replace("\\", "/").split("/")[0]
-            if top not in info.subdirs and top not in info.files:
-                issues.append(Issue(Severity.ERROR, f"{data.electrodes} is not in the input "
-                                                    "folder.", "data.electrodes"))
-            if heart.heterogeneity and data.fields and data.fields not in info.files \
-                    and heart.model == "TenTusscherPanfilov":
-                issues.append(Issue(Severity.ERROR, f"{data.fields} is not in the input folder; "
-                                                    "clear it to run without gradients.",
-                                    "data.fields"))
-        names = [n.strip() for n in data.electrode_order.split(",") if n.strip()]
-        required = {"V1", "V2", "V3", "V4", "V5", "V6", "RA", "LA", "RL", "LL"}
-        if set(names) != required or len(names) != 10:
-            issues.append(Issue(Severity.ERROR, "The electrode order must name V1-V6, RA, LA, RL "
-                                                "and LL once each.", "data.electrode_order"))
+        for field in ("torso_mesh", "heart_mesh", "pacing"):
+            folder = getattr(data, field).strip("/\\")
+            if folder.split("/")[0] not in info.subdirs:
+                issues.append(Issue(Severity.ERROR, f"The input folder has no '{folder}' "
+                                                    "sub-folder.", f"data.{field}"))
+        top = data.electrodes.replace("\\", "/").split("/")[0]
+        if top not in info.subdirs and top not in info.files:
+            issues.append(Issue(Severity.ERROR, f"{data.electrodes} is not in the input "
+                                                "folder.", "data.electrodes"))
+        if heart.heterogeneity and data.fields and data.fields not in info.files \
+                and heart.model == "TenTusscherPanfilov":
+            issues.append(Issue(Severity.ERROR, f"{data.fields} is not in the input folder; "
+                                                "clear it to run without gradients.",
+                                "data.fields"))
+    names = [n.strip() for n in data.electrode_order.split(",") if n.strip()]
+    required = {"V1", "V2", "V3", "V4", "V5", "V6", "RA", "LA", "RL", "LL"}
+    if set(names) != required or len(names) != 10:
+        issues.append(Issue(Severity.ERROR, "The electrode order must name V1-V6, RA, LA, RL "
+                                            "and LL once each.", "data.electrode_order"))
     issues += common.stimulus_issues(heart.stimuli, None, "heart.stimuli", heart.duration)
     issues += common.cell_dt_issues([heart.model], heart.dt, "heart.dt")
-    issues += common.conductivity_issues(heart.conductivities, heart.conductivity_mode, known,
-                                         "heart.conductivities")
+    if heart.solver in DIFFUSION:
+        issues += common.conductivity_issues(heart.conductivities, heart.conductivity_mode, None,
+                                             "heart.conductivities")
+    if heart.solver in EIKONAL:
+        issues += common.velocity_issues(heart.velocities, None, None, "heart.velocities")
+        issues += common.eikonal_schedule_issues(heart.stimuli, "heart.stimuli")
     for i, row in enumerate(params.conductor.heart):
         if not row.regions:
             issues.append(Issue(Severity.ERROR, "Name the heart tags of the torso mesh.",
@@ -311,26 +307,20 @@ def check(params: ECGParams, info: InputInfo | None) -> list[Issue]:
 
 
 # =============================================================================== script
-def _data_dir(params: ECGParams, ctx: ScriptContext) -> tuple[str, str]:
-    if ctx.input_dir:
-        return codegen.path(ctx.input_dir, ctx.windows), "the input folder"
-    return ('Path.home() / "TorchCorStudio" / "data" / "KCL_torso3"',
-            "shared by every run on this machine")
-
-
 def build_script(params: ECGParams, ctx: ScriptContext) -> str:
     data, heart, conductor, num, out = (params.data, params.heart, params.conductor,
                                         params.numerics, params.outputs)
     lit = codegen.lit
-    kcl = data.source == "kcl"
     model = CELL_MODELS[heart.model]
-    gradients = heart.heterogeneity and heart.model == "TenTusscherPanfilov" and bool(
-        kcl or data.fields)
+    eikonal, diffusion = heart.solver in EIKONAL, heart.solver in DIFFUSION
+    solver_class = "ReactionEikonal" if eikonal else "Monodomain"
+    gradients = heart.heterogeneity and heart.model == "TenTusscherPanfilov" and bool(data.fields)
     title = ctx.run_name or "ECG run"
     script = codegen.Script(codegen.docstring(
         title, "ECG · 12-lead ECG from ventricular electrophysiology by the lead-field "
                "(reciprocity) method.", ctx,
-        [f"Heart-torso model: {SOURCES[data.source] if kcl else 'a prepared folder'}.",
+        ["Heart-torso model: a prepared folder.",
+         f"Heart activation: {PROPAGATION[heart.solver].lower()}.",
          f"Cell model: {model.label}, {CELL_TYPES[heart.cell_type].lower()}"
          + (", with transmural and apico-basal repolarisation gradients." if gradients else "."),
          f"{heart.duration:g} ms simulated at dt = {heart.dt:g} ms; ECG sampled every "
@@ -338,7 +328,7 @@ def build_script(params: ECGParams, ctx: ScriptContext) -> str:
     script.imports.add("import numpy as np")
     script.imports.add("import torchcor as tc")
     script.imports.add("from torchcor.electrocardiogram import LeadField")
-    script.imports.add("from torchcor.electrophysiology import Monodomain")
+    script.imports.add(f"from torchcor.electrophysiology import {solver_class}")
     script.imports.add(f"from torchcor.ionic import {heart.model}")
 
     s = script.settings
@@ -348,21 +338,13 @@ def build_script(params: ECGParams, ctx: ScriptContext) -> str:
     s.add("DT", lit(float(heart.dt)), "ms per EP time step")
     s.add("SAMPLE_INTERVAL", lit(float(heart.sample_interval)), "ms between Vm frames = ECG samples")
     codegen.output_settings(script)
-    data_expr, data_note = _data_dir(params, ctx)
-    s.add("DATA", data_expr, f"heart-torso model ({data_note})")
-    if kcl:
-        s.add("TORSO_DIR", f'DATA / "{KCL_FOLDER}"', "full heart-torso mesh (µm)")
-        s.add("HEART_DIR", 'DATA / "heart"', "ventricles, in torso node order")
-        s.add("PACING_DIR", 'DATA / "pacing"', "early-activation sites")
-        s.add("ELECTRODES", 'DATA / "electrodes" / "lf_src.vtx"', "V1-V6, RA, LA, RL, LL")
-        s.add("FIELDS", 'DATA / "fields.npz"', "apico-basal and transmural coordinates")
-    else:
-        s.add("TORSO_DIR", f"DATA / {lit(data.torso_mesh)}", "full heart-torso mesh")
-        s.add("HEART_DIR", f"DATA / {lit(data.heart_mesh)}", "ventricles, in torso node order")
-        s.add("PACING_DIR", f"DATA / {lit(data.pacing)}", "early-activation sites")
-        s.add("ELECTRODES", f"DATA / {lit(data.electrodes)}", "the 10 electrode nodes")
-        if gradients:
-            s.add("FIELDS", f"DATA / {lit(data.fields)}", "apico-basal and transmural coordinates")
+    s.add("DATA", codegen.path(ctx.input_dir or ".", ctx.windows), "the prepared heart-torso model")
+    s.add("TORSO_DIR", f"DATA / {lit(data.torso_mesh)}", "full heart-torso mesh")
+    s.add("HEART_DIR", f"DATA / {lit(data.heart_mesh)}", "ventricles, in torso node order")
+    s.add("PACING_DIR", f"DATA / {lit(data.pacing)}", "early-activation sites")
+    s.add("ELECTRODES", f"DATA / {lit(data.electrodes)}", "the 10 electrode nodes")
+    if gradients:
+        s.add("FIELDS", f"DATA / {lit(data.fields)}", "apico-basal and transmural coordinates")
 
     # 1. set up ---------------------------------------------------------------------------
     script.step("Set up", "setup", "Setting up")
@@ -373,23 +355,24 @@ def build_script(params: ECGParams, ctx: ScriptContext) -> str:
     script.code(f'bundle = studio.Bundle("ecg", title={lit(title)})')
 
     # 2. data -----------------------------------------------------------------------------
-    script.step("Heart-torso model", "data", "Preparing the heart-torso model")
-    if kcl:
-        script.comment("KCL whole-torso model 3 (Qian, Bishop et al., King's College London; "
-                       "Zenodo 10.5281/zenodo.7253863, CC-BY-4.0): downloaded and prepared "
-                       "(heart, pacing sites, electrodes, coordinates) on first use, then reused.")
-        script.code("studio.prepare_kcl_torso(DATA)")
-    else:
-        script.code("""
-            for path in (TORSO_DIR, HEART_DIR, PACING_DIR, ELECTRODES):
-                if not path.exists():
-                    raise SystemExit(f"missing {path}")
-        """)
+    script.step("Heart-torso model", "data", "Checking the heart-torso model")
+    script.code("""
+        for path in (TORSO_DIR, HEART_DIR, PACING_DIR, ELECTRODES):
+            if not path.exists():
+                raise SystemExit(f"missing {path}")
+    """)
 
     # 3. heart EP -------------------------------------------------------------------------
     script.step("Heart electrophysiology", "ep", "Heart electrophysiology",
-                note="Monodomain EP on the ventricles gives the transmembrane potential Vm "
-                     "that the lead fields turn into body-surface potentials.")
+                note={"monodomain": "Monodomain EP on the ventricles.",
+                      "eikonal": "Reaction–eikonal EP on the ventricles: the eikonal activation "
+                                 "times come first, then each cell fires when its front arrives "
+                                 "(no linear solve).",
+                      "re_plus": "Reaction–eikonal EP with diffusion on the ventricles: the "
+                                 "eikonal activation times come first, then the reaction with the "
+                                 "monodomain diffusion term (a linear solve per step)."}[heart.solver]
+                     + " Its transmembrane potential Vm is what the lead fields turn into "
+                       "body-surface potentials.")
     kwargs = {"cell_type": lit(model.cell_types[heart.cell_type]), "device": "DEVICE",
               "dtype": "DTYPE"}
     script.code(codegen.call(heart.model, "DT", prefix="cell = ", **kwargs))
@@ -416,22 +399,32 @@ def build_script(params: ECGParams, ctx: ScriptContext) -> str:
         ''')
         script.code("cell.initialize = heterogeneous_init")
         script.blank()
-    sim_kwargs = {"T": "DURATION", "dt": "DT", "device": "DEVICE", "dtype": "DTYPE"}
+    sim_kwargs = {"T": "DURATION", "dt": "DT"}
+    if eikonal:
+        sim_kwargs["diffusion"] = lit(diffusion)  # without it, each cell fires on its own
+    sim_kwargs.update(device="DEVICE", dtype="DTYPE")
     if heart.mass_lumping:
         sim_kwargs["mass_lumping"] = "True"
-    script.code(codegen.call("Monodomain", "[cell]", prefix="simulator = ", **sim_kwargs))
+    script.code(codegen.call(solver_class, "[cell]", prefix="simulator = ", **sim_kwargs))
     script.code("simulator.load_mesh(HEART_DIR, unit_conversion=1000)  # µm -> mm")
-    script.comment("Heart conductivities (S/m); the KCL values are tuned for its ~0.9 mm mesh "
-                   "(about 80-100 ms total activation), region 36 is the fast endocardial layer.")
-    script.code(common.conductivity_code(heart.conductivities, heart.conductivity_mode))
-    script.comment("Early-activation sites: strength in mV/ms, times in ms.")
+    if diffusion:
+        script.comment("Heart conductivities (S/m); the KCL values are tuned for its ~0.9 mm "
+                       "mesh (about 80-100 ms total activation), region 36 is the fast "
+                       "endocardial layer.")
+        script.code(common.conductivity_code(heart.conductivities, heart.conductivity_mode))
+    if eikonal:
+        script.comment("Conduction velocities (mm/ms) per region, for the eikonal activation "
+                       "times; region 36 is the fast endocardial layer.")
+        script.code(common.velocity_code(heart.velocities))
+    script.comment("Pacing sites: strength in mV/ms, times in ms.")
     for stim in heart.stimuli:
         script.code(codegen.call("simulator.add_stimulus", f"PACING_DIR / {lit(stim.site)}",
                                  **common.stimulus_kwargs(stim)))
-    script.code(codegen.call(
-        "simulator.solve", prefix="Vm = ", a_tol=lit(num.a_tol), r_tol=lit(num.r_tol),
-        max_iter=lit(int(num.max_iter)), linear_guess=lit(bool(num.linear_guess)),
-        snapshot_interval="SAMPLE_INTERVAL", verbose="True", result_path="RESULTS") + ".cpu()")
+    solve_kwargs = {"a_tol": lit(num.a_tol), "r_tol": lit(num.r_tol), "max_iter": lit(int(num.max_iter)),
+                    "linear_guess": lit(bool(num.linear_guess))} if diffusion else {}
+    script.code(codegen.call("simulator.solve", prefix="Vm = ", **solve_kwargs,
+                             snapshot_interval="SAMPLE_INTERVAL", verbose="True",
+                             result_path="RESULTS") + ".cpu()")
     act = model.activation
     script.code(codegen.call("simulator.compute_activation_map", "Vm", prefix="ATs = ",
                              snapshot_interval="SAMPLE_INTERVAL", threshold=lit(float(act)),
@@ -467,7 +460,7 @@ def build_script(params: ECGParams, ctx: ScriptContext) -> str:
                                  it=lit(float(row.it)), el=lit(float(row.el)),
                                  et=lit(float(row.et))))
     script.code("lf.build()")
-    if kcl or data.electrode_order.replace(" ", "") == ELECTRODE_ORDER.replace(" ", ""):
+    if data.electrode_order.replace(" ", "") == ELECTRODE_ORDER.replace(" ", ""):
         script.code("lf.load_electrodes(ELECTRODES)  # V1-V6, RA, LA, RL, LL (RL = ground)")
     else:
         names = [n.strip() for n in data.electrode_order.split(",") if n.strip()]
@@ -500,9 +493,8 @@ SPEC = register(SimulationSpec(
     kind=SimulationKind.ECG,
     title="ECG",
     tagline="12-lead ECG from a heart in a torso",
-    description="Simulate a ventricular beat and compute the 12-lead ECG on a CT-based "
-                "heart-torso model with the lead-field method. The KCL torso model is "
-                "downloaded and prepared automatically on the first run.",
+    description="Simulate a ventricular beat and compute the 12-lead ECG on a prepared "
+                "heart-torso model with the lead-field method.",
     icon="ecg",
     params_model=ECGParams,
     build_script=build_script,

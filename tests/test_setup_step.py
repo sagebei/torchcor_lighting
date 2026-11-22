@@ -103,14 +103,15 @@ def test_a_demo_applies_in_place(themed, qtbot) -> None:
 
     step = _step(qtbot)
     form = step.form()
-    widgets = set(map(id, form.findChildren(QWidget)))
+    cards, tables = list(form.cards()), [form.table(p) for p in (("stimuli",), ("model", "velocities"))]
     applied = []
     step.demo_applied.connect(lambda kind, demo: applied.append((kind, demo.key)))
-    step.apply_demo("slab-eikonal")
-    assert step.params() == ep.slab_eikonal() and step.form() is form
-    assert applied == [("ep", "slab-eikonal")] and step.status_text() == "From Slab, reaction–eikonal"
-    assert set(map(id, form.findChildren(QWidget))) == widgets  # no widget made or lost
-    assert step.demos.chosen() == "slab-eikonal"
+    step.apply_demo("ventricle-eikonal")
+    assert step.params() == ep.ventricle_eikonal() and step.form() is form
+    assert applied == [("ep", "ventricle-eikonal")] and step.status_text() == "From Biventricle, reaction–eikonal"
+    assert form.cards() == cards and [form.table(p) for p in (("stimuli",), ("model", "velocities"))] == tables
+    assert all(isinstance(card, QWidget) for card in cards)  # the same panels and tables: no rebuild
+    assert step.demos.chosen() == "ventricle-eikonal"
 
 
 def test_only_a_choice_in_the_open_list_applies_a_demo(themed, qtbot) -> None:
@@ -130,19 +131,19 @@ def test_only_a_choice_in_the_open_list_applies_a_demo(themed, qtbot) -> None:
                         Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase,
                         False)
     QApplication.sendEvent(box, wheel)
-    assert step.demos.chosen() == "slab" and step.params() == ep.slab()
+    assert step.demos.chosen() == "ventricle" and step.params() == ep.ventricle()
     box.setFocus()
     qtbot.keyClick(box, Qt.Key.Key_Down)  # opens the list instead of stepping through it
     qtbot.waitUntil(box.view().isVisible, timeout=3000)
-    assert step.demos.chosen() == "slab" and step.params() == ep.slab()
+    assert step.demos.chosen() == "ventricle" and step.params() == ep.ventricle()
     qtbot.keyClick(box.view(), Qt.Key.Key_Down)
     qtbot.keyClick(box.view(), Qt.Key.Key_Return)  # chosen in the open list: applied
-    qtbot.waitUntil(lambda: step.params() == ep.slab_eikonal(), timeout=3000)
-    assert step.demos.chosen() == "slab-eikonal" and step.demo().key == "slab-eikonal"
+    qtbot.waitUntil(lambda: step.params() == ep.ventricle_eikonal(), timeout=3000)
+    assert step.demos.chosen() == "ventricle-eikonal" and step.demo().key == "ventricle-eikonal"
     _edit(step, ("timing", "duration"), 250.0)
     assert step.demos.status.text() == "1 change"
     box.activated.emit(box.currentIndex())  # the shown demo chosen again: its parameters back
-    assert step.params() == ep.slab_eikonal() and step.demos.status.text() == "Applied over your edits"
+    assert step.params() == ep.ventricle_eikonal() and step.demos.status.text() == "Applied over your edits"
 
 
 def test_changes_reset_and_undo(themed, qtbot) -> None:
@@ -157,25 +158,25 @@ def test_changes_reset_and_undo(themed, qtbot) -> None:
     demos = step.demos
     _edit(step, ("timing", "duration"), 250.0)
     _edit(step, ("timing", "dt"), 0.02)
-    assert step.status_text() == "From Slab benchmark · 2 changes" and demos.status.text() == "2 changes"
-    assert demos.status.toolTip().splitlines() == ["Time and outputs › Duration: 100 → 250 ms",
+    assert step.status_text() == "From Biventricle, five pacing sites · 2 changes" and demos.status.text() == "2 changes"
+    assert demos.status.toolTip().splitlines() == ["Time and outputs › Duration: 500 → 250 ms",
                                                    "Time and outputs › Time step: 0.01 → 0.02 ms"]
-    assert demos.reset.isVisibleTo(step) and "Slab benchmark" in demos.reset.toolTip()
+    assert demos.reset.isVisibleTo(step) and "Biventricle, five pacing sites" in demos.reset.toolTip()
     assert step.form().panel("time-and-outputs").edited
     step.reset()
-    assert step.params() == ep.slab() and step.status_text() == "From Slab benchmark"
+    assert step.params() == ep.ventricle() and step.status_text() == "From Biventricle, five pacing sites"
     assert not demos.reset.isVisibleTo(step) and not demos.status_row.isVisibleTo(step)
 
     _edit(step, ("timing", "duration"), 300.0)
     folders.set_input("/mine", "user")
-    step.apply_demo("slab-eikonal")  # replaces edited parameters: one level of Undo
-    assert step.status_text() == "Applied Slab, reaction–eikonal" and demos.undo.isVisibleTo(step)
-    assert demos.chosen() == "slab-eikonal" and demos.status.text() == "Applied over your edits"
+    step.apply_demo("ventricle-eikonal")  # replaces edited parameters: one level of Undo
+    assert step.status_text() == "Applied Biventricle, reaction–eikonal" and demos.undo.isVisibleTo(step)
+    assert demos.chosen() == "ventricle-eikonal" and demos.status.text() == "Applied over your edits"
     folders.set_input("/elsewhere", "demo")  # as a demo's data would
     step.undo()
-    assert step.params().timing.duration == 300.0 and step.demo().key == "slab" and demos.chosen() == "slab"
-    assert folders.input_dir() == "/mine" and folders.source == "user"
-    assert step.status_text() == "From Slab benchmark · 1 change" and not demos.undo.isVisibleTo(step)
+    assert step.params().timing.duration == 300.0 and step.demo().key == "ventricle"
+    assert demos.chosen() == "ventricle" and folders.input_dir() == "/mine" and folders.source == "user"
+    assert step.status_text() == "From Biventricle, five pacing sites · 1 change" and not demos.undo.isVisibleTo(step)
     assert demos.status.text() == "1 change" and demos.reset.isVisibleTo(step)
     ctx.shutdown()
 
@@ -201,9 +202,7 @@ def test_a_duplicate_shows_where_it_came_from(themed, qtbot) -> None:
 
 def test_a_fit_after_a_demo_moves_the_baseline(themed, qtbot) -> None:
     step = _step(qtbot)
-    step.apply_demo("slab")  # chosen by the user: the folder will not switch it
     step.set_input(FOLDER)
-    assert step.params().geometry.source == "slab"
     step.apply_demo("atrium")  # its blank site comes from the folder...
     assert step.params().stimuli[0].site == "LV_pf.vtx"
     assert step.status_text() == "From Atrium (Courtemanche)"  # ...and is not a change
@@ -373,7 +372,7 @@ def _context(root: Path):  # noqa: ANN202
     store = Store()
     local = store.machine(LOCAL_MACHINE_ID)
     local.python = sys.executable
-    local.input_dir = str(root)  # the machine's data folder
+    local.data_dir = str(root)  # the machine's demo data folder
     store.upsert_machine(local)
     return AppContext(store)
 
@@ -385,8 +384,9 @@ def test_demos_point_the_input_at_their_data(themed, qtbot, tmp_path: Path) -> N
     from torchcor_studio.ui.pages.new_run.page import NewRunPage
 
     root = tmp_path / "torchcor_data"
+    inputs, outputs = root / "input", root / "output"
     for sub in ("ep/ventricle", "em"):
-        (root / sub).mkdir(parents=True)
+        (inputs / sub).mkdir(parents=True)
     ctx = _context(root)
     page = NewRunPage(ctx)
     qtbot.addWidget(page)
@@ -397,43 +397,46 @@ def test_demos_point_the_input_at_their_data(themed, qtbot, tmp_path: Path) -> N
     qtbot.waitUntil(lambda: ctx.session(LOCAL_MACHINE_ID).data_folders is not None, timeout=60000)
     page.go(1)
     setup, folders = page.setup, page.folders
-    qtbot.waitUntil(lambda: folders.input_dir() == str(root / "ep"), timeout=60000)
+    # EP starts as the ventricle demo: its input folder, and the matching output folder
+    qtbot.waitUntil(lambda: folders.input_dir() == str(inputs / "ep" / "ventricle"), timeout=60000)
+    assert folders.output_dir() == str(outputs / "ep" / "ventricle")
     demos = setup.demos
 
     def tip(key: str) -> str:  # a demo's tooltip in the list: its summary, then its data
         return demos.list.itemData(demos.list.findData(key), Qt.ItemDataRole.ToolTipRole)
 
-    qtbot.waitUntil(lambda: tip("ventricle").endswith(str(root / "ep" / "ventricle")), timeout=10000)
-    assert tip("slab").endswith("Needs no input folder.") and "is not on this computer" in tip("atrium")
-    assert demos.data_chip.text() == "Built-in"  # the slab, shown
+    qtbot.waitUntil(lambda: tip("ventricle").endswith(str(inputs / "ep" / "ventricle")), timeout=10000)
+    assert "is not on this computer" in tip("atrium") and "Download the demo data" in tip("atrium")
+    assert demos.data_chip.text() == "ep/ventricle"
 
     setup.apply_demo("ventricle")  # found: the input is its folder, inspected, not remembered
-    assert folders.input_dir() == str(root / "ep" / "ventricle") and folders.source == "demo"
-    assert demos.data_chip.text() == "ep/ventricle"
+    assert folders.input_dir() == str(inputs / "ep" / "ventricle") and folders.source == "demo"
+    assert folders.output_dir() == str(outputs / "ep" / "ventricle")
     qtbot.waitUntil(lambda: folders.input_info is not None, timeout=60000)
-    assert folders.input_summary.text.text().startswith("No openCARP mesh")  # what was found
+    assert folders.input_summary.text.text().startswith("No mesh")  # what was found
     assert LOCAL_MACHINE_ID not in ctx.settings.kind_inputs
     setup.apply_demo("atrium")  # missing: the input stays, and the slot says why
-    assert folders.input_dir() == str(root / "ep" / "ventricle")
-    assert "This demo reads" in folders.input_slot.warning_text.text()
+    assert folders.input_dir() == str(inputs / "ep" / "ventricle")
+    assert "download the demo data in the Compute step" in folders.input_slot.warning_text.text()
     assert folders.input_slot.warning.isVisibleTo(page)
 
-    setup.set_kind("ecg")  # no prepared ecg folder: an empty input, the run downloads it
-    assert folders.input_dir() == "" and demos.data_chip.text() == "Auto-download"
+    setup.set_kind("ecg")  # no prepared ecg folder: the demo says where its data goes
+    assert demos.data_chip.text() == "Needs data"
+    assert f"This demo reads {inputs / 'ecg'}," in folders.input_slot.warning_text.text()
     requires = setup.spec.demo("healthy").requires
-    (root / "ecg" / "heart").mkdir(parents=True)  # an ecg folder that is not KCL torso 3...
+    (inputs / "ecg" / "heart").mkdir(parents=True)  # an ecg folder that is not KCL torso 3...
     ctx.connect_machine(LOCAL_MACHINE_ID, reprobe=True)
     session = ctx.session(LOCAL_MACHINE_ID)
     qtbot.waitUntil(lambda: session.connected and session.data_folders.has_case("ecg"), timeout=60000)
     setup.apply_demo("healthy")
-    assert folders.input_dir() == ""  # ...is not read, and nothing is downloaded into it
+    assert folders.input_dir() != str(inputs / "ecg") and demos.data_chip.text() == "Needs data"  # ...is not it
     for sub in requires:  # prepared there: the demo reads it (found on the next probe)
-        (root / "ecg" / sub).mkdir(exist_ok=True)
+        (inputs / "ecg" / sub).mkdir(exist_ok=True)
     ctx.connect_machine(LOCAL_MACHINE_ID, reprobe=True)
     qtbot.waitUntil(lambda: session.connected and session.data_folders.has_case("ecg", requires), timeout=60000)
-    assert demos.data_chip.toolTip() == str(root / "ecg")
+    assert demos.data_chip.toolTip() == str(inputs / "ecg")
     setup.apply_demo("healthy")
-    assert folders.input_dir() == str(root / "ecg")
+    assert (folders.input_dir(), folders.output_dir()) == (str(inputs / "ecg"), str(outputs / "ecg"))
 
     setup.set_kind("em")
     assert page.issues_btn.isVisible() and page.issues_btn.text().endswith("to fix")
@@ -443,3 +446,33 @@ def test_demos_point_the_input_at_their_data(themed, qtbot, tmp_path: Path) -> N
     qtbot.waitUntil(lambda: page.window().focusWidget() is target and target.property("flash"), timeout=3000)
     qtbot.waitUntil(lambda: not target.property("flash"), timeout=3000)  # a short flash
     ctx.shutdown()
+
+
+def test_ecg_heart_ep_is_one_box_with_its_panels_as_sections(themed, qtbot) -> None:
+    from PySide6.QtCore import QPoint, Qt
+
+    from torchcor_studio.ui.forms.panel import PanelGroup
+    from torchcor_studio.ui.pages.new_run.setup_step import JUMP_OFFSET
+
+    step = _step(qtbot)
+    step.set_kind("ecg")
+    area = _host(qtbot, step, 1400, 800)
+    form = step.form()
+    box = form.anchor("group-heart-ep")
+    assert isinstance(box, PanelGroup) and [card.key for card in box.cards] == ["cells", "models", "pacing-sites"]
+    assert all(card.nested and box.isAncestorOf(card) for card in box.cards)
+    assert not form.panel("heart-and-torso").nested and not box.isAncestorOf(form.panel("heart-and-torso"))
+    outline = step.rail.outline
+    rows = [(e.key, e.title, e.depth, e.group) for e in outline.entries()]
+    i = rows.index(("group-heart-ep", "Heart EP", 0, True))  # the heading, then its panels indented
+    assert rows[i + 1:i + 4] == [("cells", "Cells", 1, False), ("models", "Models", 1, False),
+                                 ("pacing-sites", "Pacing sites", 1, False)]
+    y = outline.HEAD + outline.GAP + i * outline.ROW + outline.ROW // 2
+    qtbot.mouseClick(outline, Qt.MouseButton.LeftButton, pos=QPoint(40, y))  # the heading: to the box
+    qtbot.waitUntil(lambda: box.mapTo(area.viewport(), QPoint(0, 0)).y() == JUMP_OFFSET, timeout=3000)
+    conductivities, velocities = form.table(("heart", "conductivities")), form.table(("heart", "velocities"))
+    assert conductivities.isVisibleTo(form) and not velocities.isVisibleTo(form)
+    _edit(step, ("heart", "solver"), "eikonal")  # Models: the table of the model chosen
+    assert velocities.isVisibleTo(form) and not conductivities.isVisibleTo(form)
+    _edit(step, ("heart", "solver"), "re_plus")  # with diffusion: both
+    assert velocities.isVisibleTo(form) and conductivities.isVisibleTo(form)

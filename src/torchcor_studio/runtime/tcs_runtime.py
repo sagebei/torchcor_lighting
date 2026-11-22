@@ -8,7 +8,7 @@ so it works in any environment, before TorchCor is even installed.
 Commands (each prints one JSON document on the last line of stdout)::
 
     probe                         describe the Python environment (torch, CUDA, TorchCor)
-    inspect <dir>                 summarise an input folder (openCARP mesh, .vtx, .surf)
+    inspect <dir>                 summarise an input folder (mesh, .vtx, .surf)
     scan <root> [<root> ...]      list the runs found under output folders
     launch <run_dir>              start a detached supervisor for a prepared run folder
     supervise <run_dir>           (internal) run ``run.py`` and keep ``status.json`` current
@@ -18,6 +18,8 @@ Commands (each prints one JSON document on the last line of stdout)::
     gpus                          one-shot GPU telemetry (nvidia-smi)
     remove <run_dir>              delete a run folder (only folders with a manifest)
     preview <mesh_dir> <out.npz>  boundary surface + pacing sites of a mesh (needs numpy)
+    fetch-data <dest> [<repo>]    download the newest demo data release into <dest>/torchcor_data
+                                  (progress lines {"progress": ...} come first)
 
 Run folder protocol (shared with the desktop app)::
 
@@ -252,7 +254,7 @@ def _first_line_int(path):
 
 
 def _scan_elems(path, limit_bytes):
-    """Unique element types and region tags of an openCARP ``.elem`` file."""
+    """Unique element types and region tags of an ``.elem`` file."""
     types, regions = set(), set()
     with open(path, encoding="utf-8", errors="replace") as fh:
         fh.readline()
@@ -785,12 +787,12 @@ def cmd_remove(args) -> None:
 
 # =============================================================================== preview
 def _read_mesh_arrays(path):
-    """Points (mm), tetrahedra, triangles and their region tags of an openCARP folder."""
+    """Points (mm), tetrahedra, triangles and their region tags of the mesh in a folder."""
     import numpy as np
 
     info = inspect_dir(path, limit_bytes=1)
     if not info.get("mesh_name"):
-        raise SystemExit(f"no openCARP mesh (.pts + .elem) in {path}")
+        raise SystemExit(f"no mesh (.pts + .elem) in {path}")
     base = os.path.join(path, info["mesh_name"])
     with open(base + ".pts", encoding="utf-8", errors="replace") as fh:
         fh.readline()
@@ -843,7 +845,130 @@ def cmd_preview(args) -> None:
            "sites": len(names), "bytes": os.path.getsize(out)})
 
 
+# =============================================================================== demo data
+#: The GitHub repository whose releases tagged ``data-v<version>`` hold the demo data zip.
+DATA_REPO = "sagebei/torchcor_lighting"
+DATA_FOLDER = "torchcor_data"  # the zip's one top-level folder
+DATA_VERSION_FILE = ".version"  # in it, once unzipped: {"version": "data-v1.0", "repo": ...}
+
+
+def _http(url, accept="application/json"):
+    import urllib.request
+
+    request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "torchcor-lighting"})
+    return urllib.request.urlopen(request, timeout=60)  # noqa: S310 - https URLs from GitHub
+
+
+def _data_version(tag):
+    """``data-v1.10`` -> ``(1, 10)``; ``()`` for a tag that is not a data release."""
+    return tuple(int(n) for n in re.findall(r"\d+", tag[len("data-v"):])) if tag.startswith("data-v") else ()
+
+
+def latest_data_release(repo=DATA_REPO):
+    """``(tag, url, size, sha256)`` of the zip of ``repo``'s newest ``data-v*`` release
+    (``sha256`` is "" when GitHub gives no digest)."""
+    import urllib.error
+
+    try:
+        with _http(f"https://api.github.com/repos/{repo}/releases?per_page=100") as resp:
+            releases = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        hint = "; the repository must be public" if exc.code == 404 else ""
+        raise SystemExit(f"could not list the releases of {repo} (HTTP {exc.code}{hint})") from exc
+    except OSError as exc:
+        raise SystemExit(f"could not reach GitHub: {exc}") from exc
+    found = [r for r in releases if not r.get("draft") and _data_version(str(r.get("tag_name", "")))]
+    if not found:
+        raise SystemExit(f"{repo} has no data-v* release")
+    release = max(found, key=lambda r: _data_version(r["tag_name"]))
+    zips = [a for a in release.get("assets", []) if str(a.get("name", "")).endswith(".zip")]
+    if not zips:
+        raise SystemExit(f"the release {release['tag_name']} has no .zip")
+    asset = next((a for a in zips if a["name"] == f"{DATA_FOLDER}.zip"), zips[0])
+    digest = str(asset.get("digest") or "")
+    return (release["tag_name"], asset["browser_download_url"], int(asset.get("size") or 0),
+            digest[len("sha256:"):] if digest.startswith("sha256:") else "")
+
+
+def _progress(stage, done, total, version):
+    print(json.dumps({"progress": stage, "done": done, "total": total, "version": version}), flush=True)
+
+
+def _unzip(path, dest, version):
+    """Unzip ``path`` into ``dest``: one ``torchcor_data`` folder, no path leaving it, and
+    room for it; files already there are replaced, others (run outputs) kept."""
+    import zipfile
+
+    root = os.path.realpath(dest)
+    folder = os.path.join(root, DATA_FOLDER)
+    with zipfile.ZipFile(path) as zf:
+        members = zf.infolist()
+        for member in members:
+            target = os.path.realpath(os.path.join(root, member.filename))
+            if target != folder and not target.startswith(folder + os.sep):
+                raise SystemExit(f"unexpected path in the zip: {member.filename}")
+        total = sum(m.file_size for m in members)
+        free = shutil.disk_usage(root).free
+        if free < total:
+            raise SystemExit(f"not enough free space in {dest} to unzip: {total / 1e9:.1f} GB needed, "
+                             f"{free / 1e9:.1f} GB free")
+        done, shown = 0, -1
+        for member in members:
+            zf.extract(member, root)
+            done += member.file_size
+            percent = int(100 * done / total) if total else 100
+            if percent != shown:
+                shown = percent
+                _progress("unzip", done, total, version)
+
+
+def cmd_fetch_data(args) -> None:
+    """``fetch-data <dest> [<repo>]`` — download the newest demo data release into <dest>,
+    check its SHA-256, unzip it there (``<dest>/torchcor_data``) and delete the zip."""
+    import hashlib
+
+    dest = os.path.abspath(os.path.expanduser(args[0]))
+    repo = args[1] if len(args) > 1 else DATA_REPO
+    os.makedirs(dest, exist_ok=True)
+    version, url, size, sha256 = latest_data_release(repo)
+    free = shutil.disk_usage(dest).free
+    if size and free < size:
+        raise SystemExit(f"not enough free space in {dest}: {size / 1e9:.1f} GB to download, "
+                         f"{free / 1e9:.1f} GB free")
+    part = os.path.join(dest, f"{DATA_FOLDER}.zip.part")
+    digest, done = hashlib.sha256(), 0
+    _progress("download", 0, size, version)
+    with _http(url, accept="application/octet-stream") as resp, open(part, "wb") as fh:
+        total = int(resp.headers.get("Content-Length") or size or 0)
+        shown = -1
+        while True:
+            chunk = resp.read(1 << 20)
+            if not chunk:
+                break
+            fh.write(chunk)
+            digest.update(chunk)
+            done += len(chunk)
+            percent = int(100 * done / total) if total else -1
+            if percent != shown:
+                shown = percent
+                _progress("download", done, total, version)
+    if (sha256 and digest.hexdigest() != sha256) or (size and done != size):
+        os.remove(part)
+        raise SystemExit("the download is damaged (its SHA-256 does not match the release's); try again")
+    archive = part[: -len(".part")]
+    os.replace(part, archive)
+    try:
+        _unzip(archive, dest, version)
+    finally:
+        os.remove(archive)
+    folder = os.path.join(dest, DATA_FOLDER)
+    with open(os.path.join(folder, DATA_VERSION_FILE), "w", encoding="utf-8") as fh:
+        json.dump({"version": version, "repo": repo}, fh)
+    _emit({"ok": True, "version": version, "path": folder, "bytes": done})
+
+
 COMMANDS = {
+    "fetch-data": cmd_fetch_data,
     "probe": cmd_probe,
     "inspect": cmd_inspect,
     "scan": cmd_scan,

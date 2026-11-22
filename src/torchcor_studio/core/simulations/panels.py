@@ -18,6 +18,9 @@ into blocks the form renders:
    panel holds leaves of that section; blocks of explicit scalars show none;
 5. leaves no panel claims go to a trailing "Other" panel; no ``PANELS`` at all gives one
    panel per top-level section or list, after one for the top-level scalars.
+
+Consecutive panels can share a :class:`Group`: one box headed by the group's title, with
+the panels as its sections (each still opens, closes and counts its issues on its own).
 """
 
 from __future__ import annotations
@@ -40,6 +43,18 @@ Path = tuple[str, ...]
 
 
 @dataclass(frozen=True)
+class Group:
+    """A box around consecutive panels, headed by its title and icon."""
+
+    title: str
+    icon: str
+
+    @property
+    def key(self) -> str:
+        return f"group-{slug(self.title)}"
+
+
+@dataclass(frozen=True)
 class Panel:
     """A titled group of parameters (see the module docstring)."""
 
@@ -47,6 +62,7 @@ class Panel:
     icon: str
     paths: tuple[str | tuple[str, str], ...]
     collapsed: bool = False
+    group: Group | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +84,7 @@ class ResolvedPanel:
     collapsed: bool
     blocks: tuple[Block, ...]
     leaves: tuple[Path, ...]  # every claimed leaf, in block order
+    group: Group | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +170,10 @@ def default_panels(model_cls: type[BaseModel]) -> tuple[Panel, ...]:
 def resolve(model_cls: type[BaseModel], panels: Sequence[Panel] = ()) -> tuple[ResolvedPanel, ...]:
     """The blocks of every panel (see the module docstring); ``KeyError`` for an unknown path."""
     panels = tuple(panels) or default_panels(model_cls)
+    runs = [p.group for i, p in enumerate(panels)
+            if p.group is not None and (i == 0 or panels[i - 1].group != p.group)]
+    if len(runs) != len(set(runs)):
+        raise ValueError("the panels of a group must be consecutive")
     specs = [[(s, None) if isinstance(s, str) else s for s in p.paths] for p in panels]
     explicit = {tuple(raw.split(".")) for paths in specs for raw, _eyebrow in paths
                 if raw not in SLOTS and node(model_cls, raw.split(".")) is None}
@@ -180,7 +201,7 @@ def resolve(model_cls: type[BaseModel], panels: Sequence[Panel] = ()) -> tuple[R
                        parent_changed=leaf[:-1] != parent)
                 parent = leaf[:-1]
         out.append(_finish(_unique(slug(panel.title), out), panel.title, panel.icon,
-                           panel.collapsed, blocks))
+                           panel.collapsed, blocks, panel.group))
     rest = [leaf for leaf in leaves(model_cls) if leaf not in claimed]
     if rest:
         blocks = []
@@ -232,10 +253,11 @@ def _place(model_cls: type[BaseModel], blocks: list[_Draft], leaf: Path, forced:
     blocks.append(draft)
 
 
-def _finish(key: str, title: str, icon: str, collapsed: bool, blocks: list[_Draft]) -> ResolvedPanel:
+def _finish(key: str, title: str, icon: str, collapsed: bool, blocks: list[_Draft],
+            group: Group | None = None) -> ResolvedPanel:
     frozen = tuple(Block(b.kind, tuple(b.leaves), b.eyebrow, b.caption, b.tip) for b in blocks)
     return ResolvedPanel(key, title, icon, collapsed, frozen,
-                         tuple(leaf for b in frozen for leaf in b.leaves))
+                         tuple(leaf for b in frozen for leaf in b.leaves), group)
 
 
 # ------------------------------------------------------------------------------- queries

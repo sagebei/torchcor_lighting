@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "TorchCor Lighting contributors" }]
 keywords = ["cardiac", "simulation", "electrophysiology", "ecg", "mechanics", "gpu", "torchcor"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: Qt",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",

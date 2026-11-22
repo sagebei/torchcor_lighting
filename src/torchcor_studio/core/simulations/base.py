@@ -101,10 +101,8 @@ class Demo:
     #: Sub-folders of the case that show its data is there, when the case is a kind folder
     #: (the prepared ``ecg`` folder holds ``KCL_torso3``, ``heart``, ...).
     requires: tuple[str, ...] = ()
-    download: bool = False  # the run downloads the case itself when it is missing
     cost: Cost = Cost.MINUTES
     source: str = ""  # the TorchCor demo it ports (tooltip)
-    data: str = ""  # its data set in messages: "KCL torso 3 will be downloaded here..."
 
 
 ScriptBuilder = Callable[[Any, ScriptContext], str]

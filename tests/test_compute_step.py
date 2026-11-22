@@ -186,3 +186,60 @@ def test_machine_cards_give_their_text_the_cards_width(themed, qtbot) -> None:
     card.show()
     qtbot.wait(10)
     assert card.title.width() > 200 and card.title.x() < 60
+
+
+def test_demo_data_downloads_into_the_folder_chosen(themed, qtbot, tmp_path, monkeypatch) -> None:
+    """Download runs the runtime's fetch-data on the machine (faked here) and its progress
+    shows; once done, the data folder is the machine's and the card shows it. A failure says
+    why, and Download tries again."""
+    import json
+    import sys
+
+    from torchcor_studio.core.settings import LOCAL_MACHINE_ID, Store
+    from torchcor_studio.ui.context import AppContext
+    from torchcor_studio.ui.pages.new_run.compute_step import ComputeStep
+
+    store = Store()
+    local = store.machine(LOCAL_MACHINE_ID)
+    local.python = sys.executable
+    store.upsert_machine(local)
+    ctx = AppContext(store)
+    step = ComputeStep(ctx)
+    qtbot.addWidget(step)
+    step.set_machine(LOCAL_MACHINE_ID)
+    qtbot.waitUntil(lambda: ctx.session(LOCAL_MACHINE_ID).connected, timeout=60000)
+    card, machine = step.data, ctx.machine(LOCAL_MACHINE_ID)
+    data = tmp_path / "torchcor_data"
+    seen = []
+
+    def fetch(argv, on_line, stop, env=None) -> int:  # noqa: ANN001
+        assert argv[-2:] == ["fetch-data", str(tmp_path)] and argv[1].endswith("tcs_runtime.py")
+        on_line(json.dumps({"progress": "download", "done": 50, "total": 200, "version": "data-v1.0"}))
+        seen.append((ctx.session(LOCAL_MACHINE_ID).download.stage, ctx.session(LOCAL_MACHINE_ID).download.done))
+        (data / "input" / "ep" / "ventricle").mkdir(parents=True)
+        (data / ".version").write_text('{"version": "data-v1.0"}')
+        on_line(json.dumps({"ok": True, "version": "data-v1.0", "path": str(data)}))
+        return 0
+
+    monkeypatch.setattr(machine, "stream", fetch)
+    card.set_folder(str(tmp_path))
+    assert card.target.text() == f"The data goes into {tmp_path}/torchcor_data."
+    card.download_btn.click()
+    sess = ctx.session(LOCAL_MACHINE_ID)
+    qtbot.waitUntil(lambda: sess.download.stage == "done", timeout=10000)
+    assert seen == [("download", 50)]
+    assert sess.data_folders.root == str(data) and sess.data_folders.version == "data-v1.0"
+    assert ctx.profile(LOCAL_MACHINE_ID).data_dir == str(data) and Store().machine(LOCAL_MACHINE_ID).data_dir == str(data)
+    assert card.path_label.text() == str(data) and card.download_btn.text() == "Download the latest"
+    assert "v1.0" in card.message.text() and not card.folder.isVisibleTo(step)
+
+    def private(argv, on_line, stop, env=None) -> int:  # noqa: ANN001
+        on_line("could not list the releases of sagebei/torchcor_lighting (HTTP 404; the repository must be public)")
+        return 1
+
+    monkeypatch.setattr(machine, "stream", private)
+    card.download_btn.click()
+    qtbot.waitUntil(lambda: sess.download.stage == "failed", timeout=10000)
+    assert "the repository must be public" in card.message.text() and card.download_btn.isEnabled()
+    assert sess.data_folders.root == str(data)  # the data already there is still used
+    ctx.shutdown()

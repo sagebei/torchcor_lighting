@@ -366,9 +366,12 @@ def circulation(pv_t: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def write_em_bundle(folder: Path, *, level: int = 3, dt: float = 10.0, duration: float = 800.0,
-                    title: str = "Beating left ventricle", summary_metrics: bool = False) -> Path:
+                    title: str = "Beating left ventricle", summary_metrics: bool = False,
+                    cycle_length: float | None = None) -> Path:
     """EM bundle: a contracting, twisting ventricle with voltage, tension and PV loops.
 
+    The circulation repeats every 800 ms: a ``duration`` of 2400 ms holds three beats.
+    ``cycle_length`` is stored as ``pv_cycle`` (bundles written before it have none).
     The summary deliberately omits EDV/ESV/EF unless ``summary_metrics`` is set, so the
     view has to compute them from the circulation traces.
     """
@@ -402,11 +405,13 @@ def write_em_bundle(folder: Path, *, level: int = 3, dt: float = 10.0, duration:
     apd = (270.0 - 0.3 * lat).astype(np.float32)
     tau = times[:, None] - lat[None, :]
     vm = action_potential(tau, apd[None, :]).astype(np.float16)
-    tension = (active_tension(tau) * (1.0 / (1.0 + np.exp((tau - apd[None, :] - 40.0) / 25.0)))).astype(np.float16)
+    relax = np.exp(np.minimum((tau - apd[None, :] - 40.0) / 25.0, 50.0))  # capped: no overflow on long runs
+    tension = (active_tension(tau) / (1.0 + relax)).astype(np.float16)
 
     bundle = Bundle("em", title, directory=folder)
     bundle.add_surface(points, tri, node_ids)
-    bundle.add("em", times=times, displacement=disp, vm=vm, tension=tension, pv_t=pv_t, **circ)
+    cycle = {} if cycle_length is None else {"pv_cycle": np.float32(cycle_length)}
+    bundle.add("em", times=times, displacement=disp, vm=vm, tension=tension, pv_t=pv_t, **circ, **cycle)
     if summary_metrics:
         edv, esv = float(circ["V_lv"].max()), float(circ["V_lv"].min())
         bundle.stat("EDV", edv, "mL")

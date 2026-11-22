@@ -363,11 +363,11 @@ def one_beat() -> EMParams:
 
 DEMOS = (
     Demo("five-beats", "Four-chamber heart, five beats",
-         "HCM3 virtual patient #1267 on the CircAdapt closed loop.", EMParams, case="em/heart",
+         "HCM3 virtual patient #1267 on the CircAdapt closed loop.", EMParams, case="em",
          cost=Cost.HOURS, source="demo/em/main.py"),
     Demo("one-beat", "Four-chamber heart, one beat",
          "The same heart for one beat; reuse its paced states to iterate.", one_beat,
-         case="em/heart", cost=Cost.HOURS, source="demo/em/main.py"),
+         case="em", cost=Cost.HOURS, source="demo/em/main.py"),
 )
 
 PANELS = (
@@ -432,8 +432,8 @@ def check(params: EMParams, info: InputInfo | None) -> list[Issue]:
     files = set(info.files)
     meshes = sorted(f[:-4] for f in files if f.endswith(".pts"))
     if not info.mesh_name:
-        issues.append(Issue(Severity.ERROR, "The input folder has no openCARP mesh (.pts, .elem, "
-                                            ".lon).", INPUT))
+        issues.append(Issue(Severity.ERROR, "The input folder has no mesh (.pts, .elem, .lon).",
+                            INPUT))
     elif f"{info.mesh_name}.lon" not in files:
         issues.append(Issue(Severity.ERROR, f"{info.mesh_name}.lon (fibres and sheets) is not in "
                                             "the input folder.", INPUT))

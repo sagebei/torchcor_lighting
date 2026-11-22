@@ -327,11 +327,27 @@ class Circulation:
     t: np.ndarray  # (S,) ms
     pressure: dict[str, np.ndarray]
     volume: dict[str, np.ndarray]
+    cycle_length: float | None = None  # ms; None when not known
 
     @property
     def chambers(self) -> tuple[str, ...]:
         """Chambers with both a pressure and a volume trace, in :data:`CHAMBERS` order."""
         return tuple(c for c in CHAMBERS if c in self.pressure and c in self.volume)
+
+    def beats(self) -> list[slice]:
+        """The samples of each beat: beat k spans ``k`` to ``k + 1`` cycle lengths from 0 ms
+        (the first activation), both ends included so that its loop closes. The last beat
+        may be partial; one that would fall short of 1 % of a cycle is left out. Everything
+        is one beat when the cycle length is not known (or no beat has two samples)."""
+        t, cycle = self.t, self.cycle_length
+        if not cycle or len(t) < 2:
+            return [slice(0, len(t))]
+        count = max(1, math.ceil(float(t[-1]) / cycle - 0.01))
+        edges = np.arange(count + 1, dtype=np.float64) * cycle
+        starts = np.searchsorted(t, edges[:-1] - 1e-3, side="left")
+        stops = np.searchsorted(t, edges[1:] + 1e-3, side="right")
+        beats = [slice(int(a), int(b)) for a, b in zip(starts, stops, strict=True) if b - a >= 2]
+        return beats or [slice(0, len(t))]
 
     def metrics(self, chamber: str = "lv") -> ChamberMetrics | None:
         if chamber not in self.volume:
@@ -633,7 +649,52 @@ def _parse_circulation(a: dict[str, np.ndarray], file: str) -> Circulation | Non
                 target[chamber] = values
     if not pressure and not volume:
         return None
-    return Circulation(t, pressure, volume)
+    if "pv_cycle" in a:
+        cycle = float(_array(a, "pv_cycle", file).reshape(-1)[0])
+        _expect(math.isfinite(cycle) and cycle > 0, f"{file}: pv_cycle must be a positive number of ms.")
+    else:  # bundles written before pv_cycle was: a ventricle's pressure rises once per beat
+        cycle = infer_cycle_length(t, pressure.get("lv", pressure.get("rv")))
+    return Circulation(t, pressure, volume, cycle)
+
+
+def infer_cycle_length(t: np.ndarray, trace: np.ndarray | None) -> float | None:
+    """The cycle length (ms) of a trace that repeats over two beats or more; None otherwise.
+
+    The lag at which the trace best matches itself, searched from its first decorrelation
+    (so not at lag 0) up to three quarters of its length, refined on the correlation per
+    overlapping sample and accepted when that is 0.6 or more. Beats start at 0 ms, so a lag
+    within a sample (or 1 %) of ``t[-1] / n`` is taken as exactly that: n whole beats.
+    Pass a ventricular pressure: an atrial one has two waves per beat.
+    """
+    if trace is None or len(t) < 8:
+        return None
+    dt = float(np.median(np.diff(t)))
+    if not dt > 0:
+        return None
+    grid = np.arange(float(t[0]), float(t[-1]) + dt / 2, dt)
+    x = np.interp(grid, t, trace.astype(np.float64))
+    x -= x.mean()
+    n = len(x)
+    spectrum = np.fft.rfft(x, 2 * n)
+    acf = np.fft.irfft(spectrum * np.conj(spectrum), 2 * n)[:n]  # sum of x[i] x[i + lag]
+    if not acf[0] > 0:
+        return None
+    below = np.flatnonzero(acf < 0)
+    stop = n * 3 // 4
+    if not len(below) or below[0] >= stop:
+        return None
+    lag = int(below[0] + np.argmax(acf[below[0]:stop]))  # favours the fundamental over its multiples
+    reach = max(2, lag // 20)  # ... but leans short: refine on the per-sample correlation nearby
+    lags = np.arange(max(int(below[0]), lag - reach), min(stop, lag + reach + 1))
+    per_sample = acf[lags] / (n - lags)
+    lag = int(lags[np.argmax(per_sample)])
+    if per_sample.max() < 0.6 * acf[0] / n:
+        return None
+    cycle, end = lag * dt, float(t[-1])
+    beats = round(end / cycle)
+    if beats >= 1 and abs(end / beats - cycle) <= max(dt, 0.01 * cycle):
+        cycle = end / beats
+    return cycle
 
 
 # =============================================================================== loading

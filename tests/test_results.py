@@ -24,6 +24,7 @@ from torchcor_studio.core.results import (
     SummaryItem,
     cardiac_summary,
     format_value,
+    infer_cycle_length,
     load_bundle,
     write_ecg_csv,
 )
@@ -140,6 +141,35 @@ def test_other_kinds_parse(bundles):
     lv = em.circulation.metrics("lv")
     assert lv.edv == pytest.approx(120, abs=1) and lv.esv == pytest.approx(50, abs=1)
     assert lv.ejection_fraction == pytest.approx(58.3, abs=0.5) and lv.peak_pressure == pytest.approx(120, abs=3)
+    assert em.circulation.cycle_length is None and em.circulation.beats() == [slice(0, len(em.circulation.t))]
+
+
+def _beat_times(circ: Circulation) -> list[tuple[float, float]]:
+    return [(float(circ.t[beat][0]), float(circ.t[beat][-1])) for beat in circ.beats()]
+
+
+def test_em_beats_come_from_the_stored_cycle_or_from_the_trace(tmp_path):
+    stored = load_bundle(write_em_bundle(tmp_path / "stored", dt=100.0, duration=2400.0, cycle_length=800.0))
+    assert stored.em.circulation.cycle_length == 800.0
+    assert _beat_times(stored.em.circulation) == [(0, 800), (800, 1600), (1600, 2400)]
+    # bundles written before pv_cycle: the cycle is found in the LV pressure
+    older = load_bundle(write_em_bundle(tmp_path / "older", dt=100.0, duration=2400.0)).em.circulation
+    assert older.cycle_length == 800.0 and len(older.beats()) == 3
+    trace = older.pressure["lv"]
+    assert infer_cycle_length(older.t[:401], trace[:401]) is None  # one beat does not repeat
+    assert infer_cycle_length(older.t, np.full_like(trace, 9.0)) is None
+    assert infer_cycle_length(older.t, np.random.default_rng(0).normal(size=len(trace))) is None
+    assert infer_cycle_length(older.t[:1001], trace[:1001]) == pytest.approx(800.0, abs=2)  # 2.5 beats
+
+
+def test_a_partial_last_beat_is_kept_unless_it_is_a_sliver():
+    def circulation(end: float) -> Circulation:
+        t = np.arange(0.0, end + 0.5, 1.0, dtype=np.float32)
+        return Circulation(t, {"lv": np.zeros_like(t)}, {"lv": np.zeros_like(t)}, cycle_length=800.0)
+
+    assert _beat_times(circulation(2000.0)) == [(0, 800), (800, 1600), (1600, 2000)]
+    assert _beat_times(circulation(2404.0)) == [(0, 800), (800, 1600), (1600, 2400)]
+    assert _beat_times(Circulation(np.array([0.0, 1000.0]), {}, {}, cycle_length=800.0)) == [(0, 1000)]
 
 
 def test_missing_bundle_is_reported_as_not_found(tmp_path):
@@ -456,16 +486,67 @@ def test_em_view_beats_with_pv_loops(qtbot, studio, bundles):
     labels = [tile.label.text() for tile in em.stats.tiles]
     assert labels[:5] == ["EDV", "ESV", "STROKE VOLUME", "EJECTION FRACTION", "PEAK LV PRESSURE"]
     assert em.stats.tiles[3].value.text() == "58.3"
+    assert list(em.loops) == ["lv", "rv", "la", "ra"]  # one plot per chamber
+    assert em.beat_picker is None  # one beat: nothing to pick
     em.controller.seek(10)
-    xs, _ys = em.pv_markers.getData()
-    assert len(xs) == 4
     t = float(em.em.times[10])
+    xs, _ys = em.pv_markers["lv"].getData()
     assert xs[0] == pytest.approx(float(np.interp(t, em.circulation.t, em.circulation.volume["lv"])))
-    em.legend.toggled.emit("ra", False)
-    assert len(em.pv_markers.getData()[0]) == 3
+    em.legend.toggled.emit("ra", False)  # the legend switches the traces, not the loops
+    assert not any(curve.isVisible() for curve in em._curves["ra"]) and em.loops["ra"].isVisible()
     for key in ("tension", "displacement", "voltage"):
         em.set_field(key)
         assert em.field == key
+    _cycle_theme_and_release(qtbot, view)
+
+
+def test_em_view_shows_the_beat_picked(qtbot, studio, tmp_path):
+    from PySide6.QtCore import Qt
+
+    from torchcor_studio.ui.results.em_view import ALL_BEATS
+    from torchcor_studio.ui.widgets import SegmentedControl
+
+    view = _open(qtbot, write_em_bundle(tmp_path / "em", dt=40.0, duration=2400.0, cycle_length=800.0))
+    em = view.view
+    circ, beats = em.circulation, em.circulation.beats()
+
+    def loop(chamber: str) -> np.ndarray:
+        return em.loops[chamber].getData()[0]
+
+    assert isinstance(em.beat_picker, SegmentedControl) and em.beat == 2  # opens on the last beat
+    np.testing.assert_array_equal(loop("rv"), circ.volume["rv"][beats[2]])
+    assert em.beat_spans[0].getRegion() == pytest.approx((1600.0, 2400.0)) and em.beat_spans[0].isVisible()
+    qtbot.mouseClick(em.beat_picker, Qt.MouseButton.LeftButton, pos=em.beat_picker._rects()[0].center().toPoint())
+    assert em.beat == 0
+    np.testing.assert_array_equal(loop("la"), circ.volume["la"][beats[0]])
+    em.controller.seek(int(np.searchsorted(em.em.times, 400.0)))  # playback inside the beat shown
+    assert len(em.pv_markers["lv"].getData()[0]) == 1
+    em.controller.seek(int(np.searchsorted(em.em.times, 2000.0)))  # ... and outside it: no dots
+    assert len(em.pv_markers["lv"].getData()[0]) == 0
+    em.set_beat(ALL_BEATS)
+    assert em.beat_picker.value() == ALL_BEATS and len(loop("lv")) == len(circ.t)
+    assert len(em.pv_markers["lv"].getData()[0]) == 1 and not em.beat_spans[0].isVisible()
+    _cycle_theme_and_release(qtbot, view)
+
+
+def test_em_view_lists_many_beats_in_a_drop_down(qtbot, studio, tmp_path):
+    from PySide6.QtWidgets import QComboBox
+
+    from torchcor_studio.ui.results.em_view import ALL_BEATS, BEAT_SEGMENTS
+
+    beats = BEAT_SEGMENTS + 1
+    view = _open(qtbot, write_em_bundle(tmp_path / "em", level=2, dt=200.0, duration=beats * 800.0,
+                                        cycle_length=800.0))
+    em = view.view
+    picker = em.beat_picker
+    assert isinstance(picker, QComboBox) and picker.count() == beats + 1
+    assert picker.currentText() == f"Beat {beats}" and em.beat == beats - 1
+    picker.setCurrentIndex(0)
+    assert em.beat == 0
+    picker.setCurrentIndex(beats)
+    assert em.beat == ALL_BEATS and picker.currentText() == "All beats"
+    em.set_beat(3)
+    assert picker.currentText() == "Beat 4"
     _cycle_theme_and_release(qtbot, view)
 
 

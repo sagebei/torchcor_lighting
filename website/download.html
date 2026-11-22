@@ -42,7 +42,7 @@
         <img class="hero__icon" src="assets/img/app-icon-256.webp" width="96" height="96" alt="">
         <h1 class="dl-hero__title">Download TorchCor Lighting</h1>
         <p class="dl-hero__meta">
-          Version <span data-version>0.1.0</span><span data-release-date></span> · Free and open source
+          <span data-version-label>Latest version</span><span data-release-date></span> · Free and open source
         </p>
 
         <div class="dl-hero__cta" data-primary hidden>
@@ -64,10 +64,10 @@
             <h2 class="platform__name">macOS</h2>
             <p class="platform__req">macOS 14 or later</p>
             <div class="platform__buttons">
-              <a class="btn btn--block" data-asset="macos-arm64.dmg" href="https://github.com/sagebei/torchcor_lighting/releases/download/v0.1.0/TorchCor-Lighting-0.1.0-macos-arm64.dmg">
+              <a class="btn btn--block" data-asset="macos-arm64.dmg" href="https://github.com/sagebei/torchcor_lighting/releases/latest">
                 Apple silicon <span class="btn__note">.dmg<span data-size="macos-arm64.dmg"></span></span>
               </a>
-              <a class="btn btn--block btn--ghost" data-asset="macos-x86_64.dmg" href="https://github.com/sagebei/torchcor_lighting/releases/download/v0.1.0/TorchCor-Lighting-0.1.0-macos-x86_64.dmg">
+              <a class="btn btn--block btn--ghost" data-asset="macos-x86_64.dmg" href="https://github.com/sagebei/torchcor_lighting/releases/latest">
                 Intel <span class="btn__note">.dmg<span data-size="macos-x86_64.dmg"></span></span>
               </a>
             </div>
@@ -75,7 +75,7 @@
               <li>Open the disk image and drag TorchCor Lighting to Applications.</li>
               <li>The first time, Control-click the app and choose <b>Open</b>. On macOS 15 or later, use <b>System Settings → Privacy &amp; Security → Open Anyway</b>.</li>
             </ol>
-            <p class="platform__sum">SHA-256: <a data-checksum="macos-arm64.dmg" href="https://github.com/sagebei/torchcor_lighting/releases/download/v0.1.0/TorchCor-Lighting-0.1.0-macos-arm64.dmg.sha256">Apple silicon</a> · <a data-checksum="macos-x86_64.dmg" href="https://github.com/sagebei/torchcor_lighting/releases/download/v0.1.0/TorchCor-Lighting-0.1.0-macos-x86_64.dmg.sha256">Intel</a></p>
+            <p class="platform__sum">SHA-256: <a data-checksum="macos-arm64.dmg" href="https://github.com/sagebei/torchcor_lighting/releases/latest">Apple silicon</a> · <a data-checksum="macos-x86_64.dmg" href="https://github.com/sagebei/torchcor_lighting/releases/latest">Intel</a></p>
           </article>
 
           <article class="platform" data-os="windows">
@@ -84,15 +84,19 @@
             <h2 class="platform__name">Windows</h2>
             <p class="platform__req">Windows 10 or 11, 64-bit</p>
             <div class="platform__buttons">
-              <a class="btn btn--block" data-asset="windows-x64.zip" href="https://github.com/sagebei/torchcor_lighting/releases/download/v0.1.0/TorchCor-Lighting-0.1.0-windows-x64.zip">
-                x64 <span class="btn__note">.zip<span data-size="windows-x64.zip"></span></span>
+              <a class="btn btn--block" data-asset="windows-x64-setup.exe" href="https://github.com/sagebei/torchcor_lighting/releases/latest">
+                Installer <span class="btn__note">.exe<span data-size="windows-x64-setup.exe"></span></span>
+              </a>
+              <a class="btn btn--block btn--ghost" data-asset="windows-x64.zip" href="https://github.com/sagebei/torchcor_lighting/releases/latest">
+                Portable <span class="btn__note">.zip<span data-size="windows-x64.zip"></span></span>
               </a>
             </div>
             <ol class="platform__steps">
-              <li>Extract the zip anywhere and run <b>TorchCor Lighting.exe</b>.</li>
+              <li>Run the installer. It installs for you alone, with no administrator rights, or for everyone, and adds TorchCor Lighting to the Start menu.</li>
               <li>If SmartScreen warns, choose <b>More info → Run anyway</b>.</li>
+              <li>No install: extract the portable zip anywhere and run <b>TorchCor Lighting.exe</b>.</li>
             </ol>
-            <p class="platform__sum">SHA-256: <a data-checksum="windows-x64.zip" href="https://github.com/sagebei/torchcor_lighting/releases/download/v0.1.0/TorchCor-Lighting-0.1.0-windows-x64.zip.sha256">x64</a></p>
+            <p class="platform__sum">SHA-256: <a data-checksum="windows-x64-setup.exe" href="https://github.com/sagebei/torchcor_lighting/releases/latest">Installer</a> · <a data-checksum="windows-x64.zip" href="https://github.com/sagebei/torchcor_lighting/releases/latest">Portable</a></p>
           </article>
 
           <article class="platform" data-os="linux">
@@ -101,15 +105,18 @@
             <h2 class="platform__name">Linux</h2>
             <p class="platform__req">x86_64 with glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36 or newer)</p>
             <div class="platform__buttons">
-              <a class="btn btn--block" data-asset="linux-x86_64.tar.gz" href="https://github.com/sagebei/torchcor_lighting/releases/download/v0.1.0/TorchCor-Lighting-0.1.0-linux-x86_64.tar.gz">
-                x86_64 <span class="btn__note">.tar.gz<span data-size="linux-x86_64.tar.gz"></span></span>
+              <a class="btn btn--block" data-asset="linux-x86_64.deb" href="https://github.com/sagebei/torchcor_lighting/releases/latest">
+                Ubuntu / Debian <span class="btn__note">.deb<span data-size="linux-x86_64.deb"></span></span>
+              </a>
+              <a class="btn btn--block btn--ghost" data-asset="linux-x86_64.tar.gz" href="https://github.com/sagebei/torchcor_lighting/releases/latest">
+                Other distributions <span class="btn__note">.tar.gz<span data-size="linux-x86_64.tar.gz"></span></span>
               </a>
             </div>
             <ol class="platform__steps">
-              <li>Extract the archive and run <b>torchcor-lighting</b> in the extracted folder.</li>
-              <li>Run <b>install.sh</b> in that folder to add a menu entry.</li>
+              <li>Ubuntu or Debian: <code>sudo apt install ./<span data-file="linux-x86_64.deb">TorchCor-Lighting-*-linux-x86_64.deb</span></code> adds it to the menu and <b>torchcor-lighting</b> to the PATH.</li>
+              <li>Other distributions: extract the archive, run <b>torchcor-lighting</b> in it, and <b>install.sh</b> for a menu entry.</li>
             </ol>
-            <p class="platform__sum">SHA-256: <a data-checksum="linux-x86_64.tar.gz" href="https://github.com/sagebei/torchcor_lighting/releases/download/v0.1.0/TorchCor-Lighting-0.1.0-linux-x86_64.tar.gz.sha256">x86_64</a></p>
+            <p class="platform__sum">SHA-256: <a data-checksum="linux-x86_64.deb" href="https://github.com/sagebei/torchcor_lighting/releases/latest">.deb</a> · <a data-checksum="linux-x86_64.tar.gz" href="https://github.com/sagebei/torchcor_lighting/releases/latest">.tar.gz</a></p>
           </article>
         </div>
 

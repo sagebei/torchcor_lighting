@@ -366,6 +366,15 @@ def velocity_issues(rows: Sequence[Velocity], known: Sequence[int] | None,
     return issues
 
 
+def eikonal_schedule_issues(stimuli: Sequence[Stimulus], field: str) -> list[Issue]:
+    """Reaction–eikonal repeats one activation sequence: every stimulus needs the same
+    period and number of beats."""
+    if len({(s.period, s.count if s.period > 0 else 1) for s in stimuli}) > 1:
+        return [Issue(Severity.ERROR, "Reaction–eikonal repeats one activation sequence, so every "
+                                      "stimulus needs the same period and beats.", field)]
+    return []
+
+
 # =============================================================================== regions
 def _ids(ids: Iterable[int]) -> str:
     return ", ".join(str(i) for i in ids)
@@ -557,15 +566,15 @@ def folder_name(path: str) -> str:
 
 
 def mesh_issues(info: InputInfo | None, field: str) -> list[Issue]:
-    """An openCARP mesh TorchCor can read: .pts, .elem with Tt/Tr/Ln elements, and .lon
+    """A mesh TorchCor can read: .pts, .elem with Tt/Tr/Ln elements, and .lon
     (``field``: where the issues point, the input folder)."""
     if info is None or not info.exists:
-        return [Issue(Severity.ERROR, "Choose an input folder with an openCARP mesh "
-                                      "(.pts, .elem, .lon).", field)]
+        return [Issue(Severity.ERROR, "Choose an input folder with a mesh (.pts, .elem, .lon).",
+                      field)]
     if info.error:
         return [Issue(Severity.ERROR, f"Could not read the input folder: {info.error}", field)]
     if not info.has_mesh:
-        return [Issue(Severity.ERROR, "The input folder has no openCARP mesh (.pts and .elem).",
+        return [Issue(Severity.ERROR, "The input folder has no mesh (.pts and .elem).",
                       field)]
     issues = []
     if info.fibre_columns is None:

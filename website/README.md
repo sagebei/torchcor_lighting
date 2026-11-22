@@ -28,12 +28,19 @@ export the data and regenerate them.
 
 ## Download links
 
-The download buttons point to the GitHub Release assets of `sagebei/torchcor_lighting`
-(`TorchCor-Lighting-<version>-<platform>`), as built by `.github/workflows/build.yml`.
-On page load, `assets/js/main.js` asks the GitHub API for the latest release and updates
-the version, file sizes and links automatically, so a new release needs no change here.
-The repository must be public for this, and for the download links to work.
+The site always offers the newest app release on GitHub, with nothing to update here when
+you release. The buttons are the release assets of `sagebei/torchcor_lighting`
+(`TorchCor-Lighting-<version>-<platform>`), as built by `.github/workflows/build.yml`: the
+macOS dmgs, the Windows installer (`-windows-x64-setup.exe`) and portable zip, and the
+Ubuntu/Debian `.deb` and `.tar.gz` for other Linux distributions.
 
-If the API cannot be reached, the links fall back to the version in `FALLBACK_VERSION`
-(`assets/js/main.js`) and the hard-coded links in `download.html`. Update both when you
-release, to keep that fallback current.
+On page load, `assets/js/main.js` asks the GitHub API for the newest app release (tagged
+`v1.2.3`; pre-releases and the demo data releases, `data-v1.0`, are skipped) and fills in
+its version, date, file links and sizes (cached for 10 minutes). Until it answers, or if it
+cannot (offline, or GitHub's limit of 60 requests an hour), the buttons open the release
+page at `/releases/latest`, from which every file can be downloaded. No version is written
+into the pages.
+
+That page must be the app's: the build workflow marks each app release as the latest, so
+publish demo data releases as pre-releases (or untick "Set as the latest release"). The
+repository must be public for the API and the downloads to work.

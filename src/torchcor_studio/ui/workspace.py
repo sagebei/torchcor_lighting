@@ -1,16 +1,14 @@
 """The right panel: a tab per simulation (from set-up to results), plus Machines and Settings.
 
 Tabs carry a *kind* (``"draft"``, ``"run"``, ``"machines"``, ``"settings"``) and, for runs,
-the run's key. One run tab can be a *preview*: opening another run from the sidebar
-reuses it (its title is muted) until it is kept, so browsing does not pile up tabs.
+the run's key. With no tab open, the panel offers to start a new simulation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
@@ -26,10 +24,9 @@ from PySide6.QtWidgets import (
 from torchcor_studio.ui import icons
 from torchcor_studio.ui.new_menu import NewMenuButton
 from torchcor_studio.ui.theme import theme
-from torchcor_studio.ui.widgets import IconButton
+from torchcor_studio.ui.widgets import Button, EmptyState, IconButton
 from torchcor_studio.ui.widgets.titlebar import UNIFIED, WindowDrag
 
-PREVIEW_HINT = "Preview: the next run you open replaces it. Right-click the tab and choose Keep open to keep it."
 #: Longer tab titles are shortened (the whole title is in the tab's tooltip).
 MAX_TITLE = 30
 #: Height of the tab strip (the title bar on macOS): the stylesheet's tab height + padding +
@@ -46,7 +43,6 @@ class _Tab:
     kind: str
     icon: str
     key: str | None = None
-    preview: bool = False
     title: str = ""  # in full (the tab shows it shortened)
 
 
@@ -120,11 +116,13 @@ class Workspace(QWidget):
         self.tabs.currentChanged.connect(lambda i: self.current_changed.emit(self.tabs.widget(i)))
         if UNIFIED:  # the strip is the title bar: its empty parts move the window
             bar.installEventFilter(WindowDrag(self, lambda w, pos: w.tabAt(pos) < 0))
-            self.tabs.installEventFilter(WindowDrag(self, lambda w, pos: pos.y() < bar.height()))
+            # (the strip's height, not the bar's: with no tab open the bar has none)
+            self.tabs.installEventFilter(WindowDrag(self, lambda w, pos: pos.y() < STRIP_HEIGHT))
             corner.installEventFilter(WindowDrag(self))
         lay.addWidget(self.tabs)
         self._info: dict[int, _Tab] = {}
         self._editor: _TitleEditor | None = None
+        self.empty = self._empty_page()
         theme().changed.connect(self._restyle)
 
     def _new_menu_place(self, size: QSize) -> QPoint:
@@ -132,19 +130,47 @@ class Workspace(QWidget):
         button = self.new_button
         return button.mapToGlobal(QPoint(button.width() - size.width(), button.height() + 6))
 
+    # ------------------------------------------------------------------ no tab open
+    def _empty_page(self) -> EmptyState:
+        """Shown under the strip while no tab is open: a New simulation button (its menu
+        opens below it, centred)."""
+        button = Button("New simulation", "plus", variant="primary")
+        self.empty_menu = NewMenuButton(button, lambda size: button.mapToGlobal(
+            QPoint((button.width() - size.width()) // 2, button.height() + 6)))
+        self.empty_menu.chosen.connect(self.new_requested.emit)
+        page = EmptyState("heart", "No simulation open",
+                          "Open a run from the sidebar, or start a new simulation.", button)
+        page.setParent(self.tabs)
+        page.hide()
+        self.tabs.installEventFilter(self)  # resizes it with the panel
+        return page
+
+    def _sync_empty(self) -> None:
+        empty = self.tabs.count() == 0
+        if empty:
+            self.empty.setGeometry(QRect(0, STRIP_HEIGHT, self.tabs.width(), max(0, self.tabs.height() - STRIP_HEIGHT)))
+            self.empty.raise_()
+        self.empty.setVisible(empty)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802, ANN001
+        if obj is self.tabs and event.type() == QEvent.Type.Resize:
+            self._sync_empty()
+        return False
+
     # ------------------------------------------------------------------ tabs
     def add(self, page: QWidget, kind: str, title: str, icon: str, *, key: str | None = None,
-            preview: bool = False, focus: bool = True, index: int | None = None) -> None:
+            focus: bool = True, index: int | None = None) -> None:
         if index is None:
             index = self.tabs.count()
         index = self.tabs.insertTab(index, page, _short(title))
-        self._info[id(page)] = _Tab(kind, icon, key, preview, title)
+        self._info[id(page)] = _Tab(kind, icon, key, title)
         close = _CloseButton()
         close.clicked.connect(lambda: self.close_requested.emit(page))
         self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close)
         self._style(index)
         if focus:
             self.tabs.setCurrentIndex(index)
+        self._sync_empty()
 
     def replace(self, old: QWidget, new: QWidget, kind: str, title: str, icon: str, *,
                 key: str | None = None) -> None:
@@ -158,6 +184,7 @@ class Workspace(QWidget):
         if index >= 0:
             self.tabs.removeTab(index)
         self._info.pop(id(page), None)
+        self._sync_empty()
 
     def focus(self, page: QWidget) -> None:
         index = self.tabs.indexOf(page)
@@ -182,13 +209,6 @@ class Workspace(QWidget):
         info = self._info.get(id(page)) if page is not None else None
         return info.key if info else None
 
-    def is_preview(self, page: QWidget | None) -> bool:
-        info = self._info.get(id(page)) if page is not None else None
-        return bool(info and info.preview)
-
-    def preview_page(self) -> QWidget | None:
-        return next((p for p in self.pages("run") if self.is_preview(p)), None)
-
     def set_title(self, page: QWidget, title: str, icon: str | None = None) -> None:
         index = self.tabs.indexOf(page)
         if index < 0:
@@ -209,11 +229,6 @@ class Workspace(QWidget):
         if id(page) in self._info:
             self._info[id(page)].key = key
 
-    def set_preview(self, page: QWidget, preview: bool) -> None:
-        if id(page) in self._info and self._info[id(page)].preview != preview:
-            self._info[id(page)].preview = preview
-            self._style(self.tabs.indexOf(page))
-
     # ------------------------------------------------------------------ look
     def _style(self, index: int) -> None:
         if index < 0:
@@ -222,11 +237,8 @@ class Workspace(QWidget):
         info = self._info.get(id(page))
         if info is None:
             return
-        p = theme().palette
-        bar = self.tabs.tabBar()
-        self.tabs.setTabIcon(index, icons.icon(info.icon, p.text3 if info.preview else p.text2, 14))
-        bar.setTabTextColor(index, QColor(p.text3) if info.preview else QColor())
-        bar.setTabToolTip(index, f"{info.title}\n{PREVIEW_HINT}" if info.preview else info.title)
+        self.tabs.setTabIcon(index, icons.icon(info.icon, theme().palette.text2, 14))
+        self.tabs.tabBar().setTabToolTip(index, info.title)
 
     def _restyle(self, *_args) -> None:
         bar = self.tabs.tabBar()
@@ -247,8 +259,6 @@ class Workspace(QWidget):
         menu = QMenu(self)
         if self.kind(page) in ("draft", "run"):
             menu.addAction(icons.icon("edit", p.text2), "Rename", lambda: self._edit_title(index))
-        if self.is_preview(page):
-            menu.addAction(icons.icon("check", p.text2), "Keep open", lambda: self.set_preview(page, False))
         menu.addSeparator()
         menu.addAction(icons.icon("x", p.text2), "Close", lambda: self.close_requested.emit(page))
         others = [w for w in self.pages() if w is not page]

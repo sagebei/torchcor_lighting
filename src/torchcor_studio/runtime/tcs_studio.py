@@ -51,7 +51,8 @@ Visualisation bundle format (``viz/``, format 1)
     ``times`` (F,) float32 ms · ``displacement`` (F, N, 3) float32 mm · optional
     ``vm`` (F, N) float16 mV · ``tension`` (F, N) float16 kPa ·
     circulation: ``pv_t`` (S,) float32 ms, ``p_lv p_rv p_la p_ra`` (S,) mmHg,
-    ``V_lv V_rv V_la V_ra`` (S,) mL (absent chambers are omitted).
+    ``V_lv V_rv V_la V_ra`` (S,) mL (absent chambers are omitted), optional ``pv_cycle``
+    () float32 ms: the cycle length; beat k spans ``k * pv_cycle`` to ``(k + 1) * pv_cycle``.
 
 Strings are stored as numpy unicode arrays, so every dataset loads with
 ``numpy.load(path, allow_pickle=False)``.
@@ -349,7 +350,7 @@ def pick_trace_nodes(points, lat=None, count: int = 6):
 # =============================================================================== inputs
 def make_slab_mesh(out_dir, lengths=(20.0, 7.0, 3.0), dx: float = 0.5, corner: float = 1.5,
                    name: str = "slab") -> Path:
-    """Write a structured tetrahedral slab in openCARP format and return its folder.
+    """Write a structured tetrahedral slab as a .pts/.elem/.lon mesh and return its folder.
 
     The defaults are the N-version benchmark of Niederer et al. (2011): a 20 x 7 x 3 mm
     block with fibres along x. Writes ``<name>.pts`` (µm), ``<name>.elem`` (``Tt a b c d 1``,
@@ -391,7 +392,7 @@ def make_slab_mesh(out_dir, lengths=(20.0, 7.0, 3.0), dx: float = 0.5, corner: f
 
 
 def write_vtx(path, node_ids, domain: str = "extra") -> Path:
-    """Write an openCARP ``.vtx`` node list (count, domain line, one id per line)."""
+    """Write a ``.vtx`` node list (count, domain line, one id per line)."""
     np = _np()
     ids = np.asarray(node_ids, dtype=np.int64).reshape(-1)
     path = Path(path)
@@ -429,7 +430,7 @@ def prepare_kcl_torso(data_dir, url: str = KCL_URL) -> Path:
 
     Nothing is done when the folder is already prepared. Otherwise:
 
-    1. download and unzip ``KCL_torso3`` (openCARP mesh in µm, fibres in the ventricles);
+    1. download and unzip ``KCL_torso3`` (a .pts/.elem/.lon mesh in µm, fibres in the ventricles);
     2. cut the ventricles out of the torso mesh, keeping the torso node ordering that
        ``LeadField`` requires                                  -> ``heart/``
     3. classify the heart surfaces (LV/RV endocardium, epicardium, base) and compute
@@ -483,7 +484,7 @@ def _download_kcl_torso(data: Path, url: str, attempts: int = 5) -> None:
     archive.unlink()
 
 
-def _read_carp(base):
+def _read_mesh(base):
     import numpy as np
     import pandas as pd
 
@@ -527,7 +528,7 @@ def _preprocess_kcl_torso(data: Path) -> None:  # noqa: C901 - a straight port o
 
     t0 = time.time()
     print("Pre-processing the KCL heart-torso model ...", flush=True)
-    pts_um, tets, tags, lon = _read_carp(data / KCL_TORSO / KCL_TORSO)
+    pts_um, tets, tags, lon = _read_mesh(data / KCL_TORSO / KCL_TORSO)
     pts = pts_um / 1000.0  # mm
     faces, opp, owner, first, second, paired = _face_adjacency(tets)
 
@@ -1024,6 +1025,8 @@ def export_em(frames: FrameRecorder, pv=None, bundle=None, *, title: str = "",
                 key = f"{prefix}_{chamber}"
                 if key in columns:
                     traces[key] = np.asarray(columns[key], dtype=np.float32)
+        if cycle_length:
+            traces["pv_cycle"] = np.float32(cycle_length)
     bundle.add("em", times=times[keep], displacement=displacement[keep],
                vm=None if vm is None else vm[keep],
                tension=None if tension is None else tension[keep], **traces)

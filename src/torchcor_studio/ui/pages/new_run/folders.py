@@ -155,9 +155,8 @@ class InputSummary(QFrame):
         self.preview.hide()
         self.text.setText(text)
 
-    def show_info(self, info: InputInfo | None, note: str = "") -> None:
-        """What ``info`` found; ``note``: a demo's download note, shown for a folder that does
-        not exist yet."""
+    def show_info(self, info: InputInfo | None) -> None:
+        """What ``info`` found."""
         self.spinner.hide()
         self.icon.show()
         self.preview.setVisible(bool(info and info.has_mesh and not info.error))
@@ -171,8 +170,8 @@ class InputSummary(QFrame):
             self.icon.set_icon("alert", "warning")
             self.text.setText(info.error)
         elif not info.exists:
-            self.icon.set_icon(*(("download", "info") if note else ("alert", "warning")))
-            self.text.setText(note or "This folder does not exist on the machine.")
+            self.icon.set_icon("alert", "warning")
+            self.text.setText("This folder does not exist on the machine.")
         elif info.has_mesh:
             self.icon.set_icon("mesh", "success")
             regions = f"{len(info.regions)} region{'s' if len(info.regions) != 1 else ''}"
@@ -186,7 +185,7 @@ class InputSummary(QFrame):
             parts = [f"{len(info.files)} files"]
             if info.subdirs:
                 parts.append(f"{len(info.subdirs)} folders")
-            self.text.setText("No openCARP mesh in this folder · " + " · ".join(parts))
+            self.text.setText("No mesh in this folder · " + " · ".join(parts))
 
 
 class FolderSlot(QWidget):
@@ -271,6 +270,8 @@ class Folders(QObject):
         self.kind: str | None = None
         self.input_info: InputInfo | None = None
         self.source = "default"
+        #: the output's: "default" (remembered), "data" (an input folder's in the demo data) or "user"
+        self.output_source = "default"
         self._demo: Demo | None = None
         self._chosen = False  # the user chose the input since the demo was applied
         self._role: tuple[str, str] = ("optional", "")
@@ -283,7 +284,7 @@ class Folders(QObject):
         self.input_slot = InputSlot(self.input, self.input_summary)
         self.output = FolderField("Where run folders are created",
                                   lambda cur: self._browse("dir", cur, "Choose the output folder"))
-        self.output.changed.connect(self._output_changed)
+        self.output.changed.connect(self._output_edited)
         self.output_slot = FolderSlot("Output folder", self.output)
         ctx.machine_state_changed.connect(self._on_state)
 
@@ -302,7 +303,7 @@ class Folders(QObject):
         switched = machine_id != self.machine_id
         if not switched and input_dir is None and output_dir is None:
             return  # the same machine again: keep what is in the fields
-        if switched and self.machine_id is not None:
+        if switched and self.machine_id is not None and self.output_source != "data":
             # a typed path only sends editingFinished on focus loss, which a click on a
             # machine card does not always cause: keep it for when this machine comes back
             self._output_changed(self.output.text())
@@ -324,6 +325,7 @@ class Folders(QObject):
         self.input.set_text(input_dir)
         self.output.set_text(output_dir if output_dir is not None else
                              (self.output.recent[0] if self.output.recent else ""))
+        self.output_source = "default" if output_dir is None else "user"
         if switched or self.input.text() != old_input:
             self.refresh_input()  # what was found belongs to the old machine / folder
         else:
@@ -349,15 +351,16 @@ class Folders(QObject):
         self._update_slot()
 
     def use_demo(self, demo: Demo) -> None:
-        """A demo was applied: point the input at its data when the machine has it (or is not
-        connected yet), clear it when the run downloads its data, else leave it."""
+        """A demo was applied: point the input at its data, and the output at the data's
+        matching output folder, when the machine has it (or is not connected yet), else
+        leave them."""
         self._demo = demo
         self._chosen = False
         data = self.demo_data(demo)
         if data.status in (DataStatus.FOUND, DataStatus.UNKNOWN):
+            self.output_source = "default"  # a demo writes where its data says
             self.set_input(data.path, "demo")
-        elif data.status == DataStatus.DOWNLOAD:
-            self.set_input("", "demo")
+            self._pair_output()
         self._update_slot()
 
     def set_input(self, path: str, source: str) -> None:
@@ -389,9 +392,9 @@ class Folders(QObject):
     def _default_input(self) -> str | None:
         """Where a run of the current kind starts on this machine (``None``: no opinion).
 
-        The input last chosen for this kind; else the active demo's data (its folder, or
-        nothing when its run downloads it); else the kind's sub-folder of the machine's data
-        folder (``~/torchcor_data/ep``) or the case inside it that was used last.
+        The input last chosen for this kind; else the active demo's data folder; else the
+        kind's input folder in the machine's data folder (``~/torchcor_data/input/ep``) or the
+        case inside it that was used last.
         """
         if self.machine_id is None or self.kind is None:
             return None
@@ -403,8 +406,6 @@ class Folders(QObject):
             data = self.demo_data(self._demo)
             if data.status == DataStatus.FOUND:
                 return data.path
-            if data.status == DataStatus.DOWNLOAD:
-                return ""
         data = self.ctx.session(self.machine_id).data_folders
         folder = data.folder(self.kind) if data else None
         if folder is None:
@@ -417,9 +418,7 @@ class Folders(QObject):
         if self._demo is None:
             return None
         data = self.demo_data(self._demo)
-        if data.status in (DataStatus.FOUND, DataStatus.UNKNOWN):
-            return data.path
-        return "" if data.status == DataStatus.DOWNLOAD else None
+        return data.path if data.status in (DataStatus.FOUND, DataStatus.UNKNOWN) else None
 
     def _on_state(self, machine_id: str) -> None:
         if machine_id != self.machine_id:
@@ -451,6 +450,7 @@ class Folders(QObject):
         return browse_path(self.input_slot, machine, mode, current, title)
 
     def _input_changed(self, path: str) -> None:
+        self._pair_output()
         self.input_info = None
         self.input_changed.emit(None)  # what was found no longer applies
         if not path:
@@ -481,22 +481,38 @@ class Folders(QObject):
 
     def _update_slot(self) -> None:
         """The summary line and the demo's notes under the input field: what the folder
-        holds (or the role's hint while it is empty), a note when the run downloads the
-        demo's data into it, and a warning when the demo's data is missing and no folder was
-        chosen since (then the warning alone, not the hint as well)."""
+        holds (or the role's hint while it is empty), and a warning when the demo's data is
+        missing and no folder was chosen since (then the warning alone, not the hint as well)."""
         demo = self._demo
         data = self.demo_data(demo) if demo is not None and demo.case else None
-        note = (f"{demo.data or 'Its data'} will be downloaded here on the first run, then reused."
-                if demo is not None and demo.download and self._role[0] == "optional" else "")
         missing = data is not None and data.status == DataStatus.MISSING and not self._chosen
         if missing and not self.input.text():
             self.input_summary.hide()
         elif self.input_info is not None or not self.input.text():
-            self.input_summary.show_info(self.input_info, note)
+            self.input_summary.show_info(self.input_info)
         profile = self.ctx.profile(self.machine_id) if missing and self.machine_id else None
         self.input_slot.set_warning(
             f"This demo reads {data.path}, which is not on {machine_words(profile) if profile else 'the machine'}: "
-            "copy TorchCor's demo data there, or choose its folder." if missing else "")
+            "download the demo data in the Compute step, or choose its folder." if missing else "")
+
+    def _pair_output(self) -> None:
+        """An input folder of the demo data writes to its matching output folder, unless the
+        user chose the output; an input elsewhere gives the remembered output back."""
+        if self.output_source == "user" or self.machine_id is None:
+            return
+        data = self.ctx.session(self.machine_id).data_folders
+        paired = data.paired_output(self.input.text()) if data is not None and self.input.text() else None
+        if paired is not None:
+            self.output_source = "data"
+            self.output.set_text(paired)
+        elif self.output_source == "data":
+            self.output_source = "default"
+            self.output.set_text(self.output.recent[0] if self.output.recent else "")
+
+    def _output_edited(self, path: str) -> None:
+        """Typed, browsed or picked from the recent folders: the user's choice."""
+        self.output_source = "user"
+        self._output_changed(path)
 
     def _output_changed(self, path: str) -> None:
         if not (self.machine_id and path):

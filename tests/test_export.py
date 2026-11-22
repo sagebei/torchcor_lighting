@@ -120,7 +120,7 @@ def test_tcs_studio_imports_with_the_standard_library_only(tmp_path):
 
 
 # =============================================================================== inputs
-def test_make_slab_mesh_writes_an_opencarp_mesh(tmp_path):
+def test_make_slab_mesh_writes_pts_elem_and_lon(tmp_path):
     folder = studio.make_slab_mesh(tmp_path / "mesh", lengths=(4.0, 2.0, 1.0), dx=0.5, corner=1.0)
     nx, ny, nz = 9, 5, 3
     lines = (folder / "slab.pts").read_text().splitlines()
@@ -497,6 +497,7 @@ def test_export_em_follows_the_bundle_spec(tmp_path):
     assert data["vm"].dtype == np.float16 and data["vm"].shape == (f, n)
     assert data["tension"].dtype == np.float16 and data["tension"].shape == (f, n)
     assert data["pv_t"].dtype == np.float32 and len(data["pv_t"]) == len(t)
+    assert data["pv_cycle"].dtype == np.float32 and data["pv_cycle"].shape == () and data["pv_cycle"] == 833.0
     assert {"p_lv", "V_lv", "p_rv", "V_rv"} <= set(data) and "p_la" not in data
     assert "q_ao" not in data
     summary = {row["label"]: row["value"] for row in index["summary"]}
@@ -509,12 +510,15 @@ def test_export_em_follows_the_bundle_spec(tmp_path):
 # =============================================================================== ECG run
 @pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCHCOR, reason="TorchCor is not installed")
-def test_ecg_runs_end_to_end_on_a_synthetic_torso(tmp_path, prepared_torso):
-    """The whole ECG pipeline (EP, lead fields, 12 leads, bundle) on the synthetic torso."""
+@pytest.mark.parametrize("solver", ["monodomain", "eikonal", "re_plus"])
+def test_ecg_runs_end_to_end_on_a_synthetic_torso(tmp_path, prepared_torso, solver):
+    """The whole ECG pipeline (EP, lead fields, 12 leads, bundle) on the synthetic torso,
+    with either propagation model."""
     from torchcor_studio.core.simulations import ecg
     from torchcor_studio.core.simulations.base import ScriptContext
 
     params = ecg.ECGParams()
+    params.heart.solver = solver
     params.heart.duration = 30.0
     params.heart.dt = 0.02
     params.heart.heterogeneity = True

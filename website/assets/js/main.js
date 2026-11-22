@@ -2,15 +2,17 @@
 (() => {
   'use strict';
 
+  // Every download is the newest app release on GitHub: its files, version and sizes come
+  // from the GitHub API; until it answers (or if it cannot), the links open that release's
+  // page (/releases/latest, which the build workflow keeps on the newest app release).
   const REPO = 'sagebei/torchcor_lighting';
-  // Used until the GitHub API answers, or if it cannot be reached. Update on each release.
-  const FALLBACK_VERSION = '0.1.0';
-
   const GH = `https://github.com/${REPO}`;
   const FILES = {
     'macos-arm64.dmg': { os: 'mac', label: 'macOS', detail: 'Apple silicon' },
     'macos-x86_64.dmg': { os: 'mac', label: 'macOS', detail: 'Intel' },
-    'windows-x64.zip': { os: 'windows', label: 'Windows', detail: 'Windows 10 or 11, 64-bit' },
+    'windows-x64-setup.exe': { os: 'windows', label: 'Windows', detail: 'Installer for Windows 10 or 11, 64-bit' },
+    'windows-x64.zip': { os: 'windows', label: 'Windows', detail: 'Portable, Windows 10 or 11, 64-bit' },
+    'linux-x86_64.deb': { os: 'linux', label: 'Linux', detail: '.deb for Ubuntu 22.04 and Debian 12 or newer' },
     'linux-x86_64.tar.gz': { os: 'linux', label: 'Linux', detail: 'x86_64, glibc 2.35 or newer' },
   };
 
@@ -42,29 +44,31 @@
     return 'other';
   }
   const os = detectOS();
-  let primary = { mac: 'macos-arm64.dmg', windows: 'windows-x64.zip', linux: 'linux-x86_64.tar.gz' }[os] || null;
+  let primary = { mac: 'macos-arm64.dmg', windows: 'windows-x64-setup.exe', linux: 'linux-x86_64.deb' }[os] || null;
 
   /* ---------- Release ---------- */
-  const release = { version: FALLBACK_VERSION, date: '', page: `${GH}/releases`, assets: null };
+  const release = { version: '', date: '', page: `${GH}/releases/latest`, assets: {} };
 
   function link(key, checksum) {
-    if (release.assets) {
-      const a = release.assets[key];
-      if (!a) return release.page;
-      return checksum ? a.sha || release.page : a.url;
-    }
-    const v = release.version;
-    return `${GH}/releases/download/v${v}/TorchCor-Lighting-${v}-${key}${checksum ? '.sha256' : ''}`;
+    const a = release.assets[key];
+    if (!a) return release.page;
+    return checksum ? a.sha || release.page : a.url;
   }
 
   function render() {
-    $$('[data-version]').forEach((el) => { el.textContent = release.version; });
+    $$('[data-version-label]').forEach((el) => {
+      el.textContent = release.version ? `Version ${release.version}` : 'Latest version';
+    });
     $$('[data-release-date]').forEach((el) => { el.textContent = release.date ? ` · ${release.date}` : ''; });
     $$('[data-asset]').forEach((a) => { a.href = link(a.dataset.asset); });
     $$('[data-checksum]').forEach((a) => { a.href = link(a.dataset.checksum, true); });
     $$('[data-size]').forEach((el) => {
-      const a = release.assets && release.assets[el.dataset.size];
+      const a = release.assets[el.dataset.size];
       el.textContent = a && a.size ? `${Math.round(a.size / 1e6)} MB` : '';
+    });
+    $$('[data-file]').forEach((el) => {  // a file's name in a command, once it is known
+      const a = release.assets[el.dataset.file];
+      if (a) el.textContent = a.name;
     });
 
     // Overview page: name the visitor's platform on the hero button.
@@ -80,9 +84,12 @@
       btn.href = link(primary);
       btn.dataset.asset = primary;
       $('[data-primary-label]', box).textContent = `Download for ${f.label}`;
-      $('[data-primary-sub]', box).textContent = os === 'mac'
-        ? `${f.detail} · Other platforms and ${primary === 'macos-arm64.dmg' ? 'Intel Macs' : 'Apple silicon'} below`
-        : `${f.detail} · Other platforms below`;
+      const others = {
+        mac: primary === 'macos-arm64.dmg' ? 'Intel Macs' : 'Apple silicon',
+        windows: 'the portable zip',
+        linux: 'the .tar.gz for other distributions',
+      }[os];
+      $('[data-primary-sub]', box).textContent = `${f.detail} · Other platforms and ${others} below`;
       box.hidden = false;
     }
   }
@@ -106,23 +113,27 @@
   function readCache(key) {
     try {
       const c = JSON.parse(sessionStorage.getItem(key) || 'null');
-      return c && Date.now() - c.t < 30 * 60 * 1000 ? c : null;
+      return c && Date.now() - c.t < 10 * 60 * 1000 ? c : null;  // a new release shows within 10 min
     } catch (e) { return null; }
   }
 
   async function loadLatestRelease() {
-    const KEY = 'tcl-latest-release';
+    const KEY = 'tcl-latest-app-release';
     let data = readCache(KEY);
     if (!data) {
       let res;
       try {
-        res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+        // the newest app release, tagged v1.2.3: the repository's "latest" may be a demo data
+        // release (data-v1.0), which holds no app
+        res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, {
           headers: { Accept: 'application/vnd.github+json' },
         });
-      } catch (e) { return; } // offline: keep the fallback links
-      if (res.status === 404) { release.assets = {}; render(); return; } // no release yet
-      if (!res.ok) return; // e.g. rate-limited: keep the fallback links
-      const j = await res.json();
+      } catch (e) { return; } // offline: the links keep opening the latest release's page
+      if (!res.ok) return; // private, or rate-limited (60 requests an hour): the same
+      const list = await res.json();
+      const j = (Array.isArray(list) ? list : []).find(
+        (r) => !r.draft && !r.prerelease && /^v\d/i.test(r.tag_name || ''));
+      if (!j) return; // no app release yet
       data = {
         t: Date.now(),
         tag: j.tag_name,
@@ -143,7 +154,7 @@
     Object.keys(FILES).forEach((key) => {
       const file = data.assets.find(([name]) => name.endsWith(`-${key}`));
       const sum = data.assets.find(([name]) => name.endsWith(`-${key}.sha256`));
-      if (file) release.assets[key] = { url: file[1], size: file[2], sha: sum ? sum[1] : null };
+      if (file) release.assets[key] = { name: file[0], url: file[1], size: file[2], sha: sum ? sum[1] : null };
     });
     render();
   }

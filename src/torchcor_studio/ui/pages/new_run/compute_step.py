@@ -1,4 +1,5 @@
-"""Step 1 — where to run: the machine, the device on it and its Python environment.
+"""Step 1 — where to run: the machine, the device on it, its Python environment and the
+demo data on it (downloaded from GitHub by the runtime's ``fetch-data``).
 
 The input and output folders are chosen on the Setup step (``folders.py``)."""
 
@@ -8,14 +9,17 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QProgressBar,
     QVBoxLayout,
     QWidget,
 )
 
 from torchcor_studio.core.models import MIN_TORCHCOR, EnvironmentReport, MachineProfile
-from torchcor_studio.ui.context import AppContext, MachineState
-from torchcor_studio.ui.format import plural
+from torchcor_studio.ui.browse import browse_path
+from torchcor_studio.ui.context import AppContext, MachineSession, MachineState
+from torchcor_studio.ui.format import plural, size
 from torchcor_studio.ui.pages.new_run.device_picker import DevicePicker
+from torchcor_studio.ui.pages.new_run.folders import FolderField, machine_words
 from torchcor_studio.ui.theme import theme
 from torchcor_studio.ui.widgets import (
     Badge,
@@ -277,8 +281,105 @@ class EnvironmentCard(Card):
         self.message.setText(environment_message(env))
 
 
+class DemoDataCard(Card):
+    """TorchCor's demo data on the machine: its folder and version when it is there, else a
+    folder to download it into; then the download's progress, with Cancel."""
+
+    download_requested = Signal(str)  # the folder it goes into (as <folder>/torchcor_data)
+    cancel_requested = Signal()
+
+    def __init__(self, browse) -> None:  # noqa: ANN001 - (current path) -> chosen path | None
+        super().__init__()  # titled by the "Demo data" section header above it
+        status = QHBoxLayout()
+        status.setSpacing(8)
+        self.icon = IconLabel("info", 16, tone="faint")
+        self.message = label("", "muted", wrap=True)
+        status.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
+        status.addWidget(self.message, 1)
+        self.addLayout(status)
+        self.path_label = label("", "mono")
+        self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.addWidget(self.path_label)
+        self.folder = FolderField("Folder to download into", browse)
+        self.folder.recent_btn.hide()  # a download goes where it is told, not where runs went
+        self.folder.path_changed.connect(self._show_target)
+        self.addWidget(self.folder)
+        self.target = label("", "caption")
+        self.addWidget(self.target)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.bar.setTextVisible(False)
+        self.addWidget(self.bar)
+        self.progress = label("", "caption")
+        self.addWidget(self.progress)
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        self.download_btn = Button("Download", "download", "subtle", size="sm",
+                                   on_click=lambda: self.download_requested.emit(self.folder.text().strip()))
+        self.cancel_btn = Button("Cancel", "x", "ghost", size="sm", on_click=self.cancel_requested.emit)
+        actions.addWidget(self.download_btn)
+        actions.addWidget(self.cancel_btn)
+        actions.addStretch(1)
+        self.addLayout(actions)
+
+    def set_folder(self, folder: str) -> None:
+        """Where a download goes, until the user picks another folder."""
+        self.folder.set_text(folder)
+        self._show_target(folder)
+
+    def _show_target(self, folder: str) -> None:
+        folder = folder.strip().rstrip("/\\")
+        self.target.setText(f"The data goes into {folder}/torchcor_data." if folder else "")
+
+    def _say(self, text: str, icon: str, tone: str, role: str = "muted") -> None:
+        self.icon.set_icon(icon, tone)
+        self.message.setText(text)
+        if self.message.property("role") != role:
+            self.message.setProperty("role", role)
+            self.message.style().polish(self.message)
+
+    def show_session(self, sess: MachineSession) -> None:
+        job, data = sess.download, sess.data_folders
+        active = job is not None and job.active
+        self.bar.setVisible(active)
+        self.progress.setVisible(active)
+        self.cancel_btn.setVisible(active)
+        self.download_btn.setVisible(not active)
+        self.download_btn.setEnabled(sess.connected)
+        # with the data there, its folder is shown, and the latest goes over it
+        self.folder.setVisible(data is None)
+        self.target.setVisible(data is None)
+        self.folder.setEnabled(sess.connected and not active)
+        self.path_label.setVisible(data is not None and not active)
+        self.download_btn.setText("Download the latest" if data is not None else "Download")
+        if active:
+            what = {"download": "Downloading", "unzip": "Unzipping"}.get(job.stage, "Finding the latest release")
+            version = job.version.removeprefix("data-") if job.version else ""
+            self._say(f"{what} the demo data{f' {version}' if version else ''}…", "download", "accent")
+            self.bar.setValue(int(1000 * job.done / job.total) if job.total else 0)
+            self.bar.setRange(0, 1000 if job.total else 0)  # busy until the size is known
+            self.progress.setText(f"{size(job.done)} of {size(job.total)}" if job.total else "")
+            return
+        if not sess.connected:
+            self._say("Connect to the machine to see its demo data.", "info", "faint")
+            self.path_label.hide()
+            return
+        if job is not None and job.stage == "failed":
+            self._say(f"Could not download the demo data: {job.error}", "alert", "danger", "error")
+        elif job is not None and job.stage == "cancelled":
+            self._say("The download was cancelled.", "info", "faint")
+        elif data is not None:
+            version = data.version.removeprefix("data-")
+            self._say(f"The demos read the demo data{f' {version}' if version else ''} in this folder; "
+                      "each writes its runs to the matching output folder.", "check-circle", "success")
+            self.path_label.setText(data.root)
+        else:
+            self._say("TorchCor's example meshes and models for the demos. Download them from "
+                      "GitHub onto this machine.", "info", "faint")
+
+
 class ComputeStep(QWidget):
-    """Machine → the device to run on → its Python environment."""
+    """Machine → the device to run on → its Python environment → the demo data on it."""
 
     machine_changed = Signal(str)
     ready_changed = Signal(bool)
@@ -310,10 +411,18 @@ class ComputeStep(QWidget):
         self.env.python_requested.connect(self._pick_python)
         self.env.use_python_requested.connect(self._use_python)
         lay.addWidget(self.env)
+
+        lay.addWidget(SectionHeader("Demo data", "The example meshes and models the demos read, "
+                                                 "and where their runs go."))
+        self.data = DemoDataCard(self._browse_data)
+        self.data.download_requested.connect(self._download_data)
+        self.data.cancel_requested.connect(lambda: self.machine_id and ctx.cancel_demo_data(self.machine_id))
+        lay.addWidget(self.data)
         lay.addStretch(1)
 
         ctx.machine_state_changed.connect(self._on_state)
         ctx.environment_changed.connect(self._on_state)
+        ctx.demo_data_changed.connect(self._on_data)
         ctx.telemetry.connect(self._on_telemetry)
 
     # ------------------------------------------------------------------ public
@@ -342,12 +451,16 @@ class ComputeStep(QWidget):
             machine_id = self.ctx.default_machine_id()
         if machine_id != self.machine_id:
             self.devices.clear()
+        switched = machine_id != self.machine_id
         self.machine_id = machine_id
         self.picker.select(machine_id, emit=False)
         self.ctx.settings.last_machine_id = machine_id
         if samples := self.ctx.session(machine_id).samples:
             self.devices.update_samples(samples)
         self._watch(machine_id)
+        if switched:
+            self.data.set_folder(self._data_parent(machine_id))
+            self.data.folder.set_machine_name(machine_words(self.ctx.profile(machine_id)))
         self.ctx.connect_machine(machine_id)
         self._on_state(machine_id)
         self.machine_changed.emit(machine_id)
@@ -367,7 +480,32 @@ class ComputeStep(QWidget):
             return
         sess = self.ctx.session(machine_id)
         self.env.show_state(sess.state, sess.error, sess.env, sess.suggestion)
+        self.data.show_session(sess)
         self.ready_changed.emit(self.is_ready())
+
+    def _on_data(self, machine_id: str) -> None:
+        if machine_id != self.machine_id:
+            return
+        sess = self.ctx.session(machine_id)
+        if sess.download is not None and sess.download.stage == "done":
+            self.data.set_folder(self._data_parent(machine_id))
+        self.data.show_session(sess)
+
+    def _data_parent(self, machine_id: str) -> str:
+        """Where the data folder is (or would go by default): the folder that holds it."""
+        sess = self.ctx.session(machine_id)
+        root = sess.data_folders.root if sess.data_folders is not None else sess.profile.data_dir
+        if not root:
+            return "~"
+        return root.rstrip("/\\").rsplit("/", 1)[0].rsplit("\\", 1)[0] or "/"
+
+    def _browse_data(self, current: str) -> str | None:
+        machine = self.ctx.machine(self.machine_id) if self.machine_id else None
+        return browse_path(self, machine, "dir", current, "Choose where to put the demo data")
+
+    def _download_data(self, folder: str) -> None:
+        if self.machine_id and folder:
+            self.ctx.fetch_demo_data(self.machine_id, folder)
 
     def _on_telemetry(self, machine_id: str, samples) -> None:  # noqa: ANN001
         if machine_id == self.machine_id:

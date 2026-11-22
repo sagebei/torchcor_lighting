@@ -58,15 +58,10 @@ def _errors(issues):
     return [i for i in issues if i.severity == Severity.ERROR]
 
 
-def _custom_ecg() -> ecg.ECGParams:
-    return ecg.ECGParams(data=ecg.ECGData(source="custom"))
-
-
 def _cases():
     for spec in specs():
         for demo in spec.demos:
             yield spec, demo.key, demo.params
-    yield get_spec("ecg"), "custom", _custom_ecg  # a prepared folder: no demo of its own
 
 
 CASES = list(_cases())
@@ -98,9 +93,9 @@ def test_specs_are_registered_with_their_metadata():
         assert not any("RTX" in d.summary for d in spec.demos)  # no hardware-specific timings
         assert spec.stages[-1].id == "done"
         assert len({s.id for s in spec.stages}) == len(spec.stages)
-    assert get_spec("ep").input_role(ep.EPParams())[0] == "unused"
+    assert get_spec("ep").input_role(ep.EPParams())[0] == "required"
     assert get_spec("mechanics").input_role(mechanics.MechanicsParams())[0] == "unused"
-    assert get_spec("ecg").input_role(ecg.ECGParams())[0] == "optional"
+    assert get_spec("ecg").input_role(ecg.ECGParams())[0] == "required"
     assert get_spec("em").input_role(em.EMParams())[0] == "required"
 
 
@@ -215,18 +210,19 @@ def _ventricle_info(**overrides) -> InputInfo:
     return InputInfo(**info)
 
 
-def test_ep_defaults_run_without_input():
+def test_ep_defaults_are_the_ventricle_demo():
     params = ep.EPParams()
-    assert params.geometry.source == "slab"
-    assert params.variant_label() == "Monodomain"
-    assert not _errors(ep.check(params, None))
+    assert params == ep.ventricle() and params.variant_label() == "Monodomain"
+    assert [e.field for e in _errors(ep.check(params, None))] == [INPUT]  # the mesh: the input folder's
+    assert not _errors(ep.check(params, _ventricle_info()))
+    assert [d.key for d in get_spec("ep").demos] == ["ventricle", "ventricle-eikonal", "atrium"]
 
 
 def test_ep_variants():
-    assert ep.slab_eikonal().variant_label() == "Reaction–eikonal"
+    assert ep.ventricle_eikonal().variant_label() == "Reaction–eikonal"
     params = ep.EPParams()
     params.model.solver = "re_plus"
-    assert params.variant_label() == "Reaction–eikonal+"
+    assert params.variant_label() == "Reaction–eikonal with diffusion"
 
 
 def test_ep_input_folder_checks():
@@ -234,7 +230,7 @@ def test_ep_input_folder_checks():
     assert not _errors(ep.check(params, _ventricle_info()))
     assert _errors(ep.check(params, None))
     no_mesh = _ventricle_info(mesh_name=None)
-    assert any("no openCARP mesh" in i.message for i in _errors(ep.check(params, no_mesh)))
+    assert any("no mesh" in i.message for i in _errors(ep.check(params, no_mesh)))
     no_lon = _ventricle_info(fibre_columns=None)
     assert any(".lon" in i.message for i in _errors(ep.check(params, no_lon)))
     hexes = _ventricle_info(elem_types=["Tt", "Hx"])
@@ -267,20 +263,19 @@ def test_ep_timing_and_eikonal_checks():
     params.timing.snapshot_interval = 0.015
     assert any(e.field == "timing.snapshot_interval" for e in _errors(ep.check(params, None)))
 
-    params = ep.slab_eikonal()
-    params.stimuli = [ep.Stimulus(site="stimulus.vtx"),
-                      ep.Stimulus(site="left_face.vtx", period=300.0, count=2)]
-    assert any("same period" in e.message for e in _errors(ep.check(params, None)))
+    params = ep.ventricle_eikonal()
+    params.stimuli[1].period, params.stimuli[1].count = 300.0, 2
+    assert any("same period" in e.message for e in _errors(ep.check(params, _ventricle_info())))
 
-    params = ep.slab_eikonal()
-    params.model.velocities[0].vel_n = 0.1  # the slab has no sheet directions
-    assert any(e.field == "model.velocities.0.vel_n" for e in _errors(ep.check(params, None)))
+    params = ep.ventricle_eikonal()
+    params.model.velocities[0].vel_n = 0.1  # the mesh has no sheet directions
+    assert any(e.field == "model.velocities.0.vel_n" for e in _errors(ep.check(params, _ventricle_info())))
 
 
-def test_ep_slab_sites_and_cell_groups():
+def test_ep_sites_and_cell_groups():
     params = ep.EPParams()
-    params.stimuli[0].site = "LV_sf.vtx"
-    assert any(e.field == "stimuli.0.site" for e in _errors(ep.check(params, None)))
+    params.stimuli[0].site = "His.vtx"  # not in the folder
+    assert any(e.field == "stimuli.0.site" for e in _errors(ep.check(params, _ventricle_info())))
 
     params = ep.EPParams()
     params.cells = [ep.CellGroup(), ep.CellGroup(model="CourtemancheRamirezNattel")]
@@ -348,37 +343,60 @@ def test_ep_script_variants():
 
 
 # =============================================================================== ECG
-def test_ecg_defaults_and_kcl_info():
+def test_ecg_reads_a_prepared_folder():
     params = ecg.ECGParams()
-    assert params.variant_label() == "12-lead · KCL torso 3"
-    issues = ecg.check(params, None)
-    assert not _errors(issues)
-    assert not any("downloaded" in i.message for i in issues)  # the empty input's hint says so
-    elsewhere = InputInfo(path="/d", exists=True, files=["notes.txt"])
-    assert any("downloaded" in i.message for i in ecg.check(params, elsewhere))  # into that folder
+    assert params.variant_label() == "12-lead"
+    assert [e.field for e in _errors(ecg.check(params, None))] == [INPUT]  # choose the folder
     prepared = InputInfo(path="/d", exists=True, files=["fields.npz"],
                          subdirs=["KCL_torso3", "electrodes", "heart", "pacing"])
-    assert not any("downloaded" in i.message for i in ecg.check(params, prepared))
-    source = ecg.build_script(params, _ctx(input_dir=""))
-    assert 'DATA = Path.home() / "TorchCorStudio" / "data" / "KCL_torso3"' in source
-    assert "studio.prepare_kcl_torso(DATA)" in source
+    assert not ecg.check(params, prepared)
+    source = ecg.build_script(params, _ctx(input_dir="/data/ecg"))
+    assert 'DATA = Path("/data/ecg")' in source and 'TORSO_DIR = DATA / "KCL_torso3"' in source
+    assert "download" not in source.lower() and "prepare_" not in source
     assert "lf.add_heart_conductivity([34, 35], il=0.174, it=0.019, el=0.625, et=0.236)" in source
+
+
+def test_ecg_reaction_eikonal():
+    params = ecg.ECGParams()
+    params.heart.solver = "eikonal"
+    assert params.variant_label() == "12-lead · reaction–eikonal"
+    prepared = InputInfo(path="/d", exists=True, files=["fields.npz"],
+                         subdirs=["KCL_torso3", "electrodes", "heart", "pacing"])
+    assert not ecg.check(params, prepared)
+    source = ecg.build_script(params, _ctx(input_dir="/data/ecg"))
+    assert "from torchcor.electrophysiology import ReactionEikonal" in source
+    assert "ReactionEikonal([cell], T=DURATION, dt=DT, diffusion=False" in source
+    assert "simulator.add_velocity([36], vel_l=1.15, vel_t=1.15)" in source
+    assert "add_conductivity" not in source.split("lf = LeadField")[0]  # the heart's: velocities instead
+    assert "Vm = simulator.solve(snapshot_interval=SAMPLE_INTERVAL" in source  # no CG settings
+    params.heart.velocities = []
+    assert any(e.field == "heart.velocities" for e in _errors(ecg.check(params, prepared)))
+    params = ecg.ECGParams()
+    params.heart.solver = "eikonal"
+    params.heart.stimuli[0].period, params.heart.stimuli[0].count = 500.0, 2
+    assert any(e.field == "heart.stimuli" for e in _errors(ecg.check(params, prepared)))
+
+    params = ecg.ECGParams()  # with diffusion: velocities and conductivities, and the CG solve
+    params.heart.solver = "re_plus"
+    assert params.variant_label() == "12-lead · reaction–eikonal with diffusion"
+    assert not ecg.check(params, prepared)
+    source = ecg.build_script(params, _ctx(input_dir="/data/ecg"))
+    assert "ReactionEikonal([cell], T=DURATION, dt=DT, diffusion=True" in source
+    assert "simulator.add_velocity([36], vel_l=1.15, vel_t=1.15)" in source
+    assert "simulator.add_conductivity([36], il=1.5, it=1.5)" in source
+    assert "Vm = simulator.solve(a_tol=" in source
+    params.heart.conductivities = []
+    assert any(e.field == "heart.conductivities" for e in _errors(ecg.check(params, prepared)))
 
 
 def test_ecg_checks():
     params = ecg.ECGParams()
-    params.heart.stimuli[0].site = "His.vtx"
-    assert any(e.field == "heart.stimuli.0.site" for e in _errors(ecg.check(params, None)))
-
-    custom = _custom_ecg()
-    assert _errors(ecg.check(custom, None))
     folder = InputInfo(path="/d", exists=True, files=["fields.npz"],
                        subdirs=["KCL_torso3", "heart", "pacing", "electrodes"])
-    assert not _errors(ecg.check(custom, folder))
-    custom.data.heart_mesh = "ventricles"
-    assert any(e.field == "data.heart_mesh" for e in _errors(ecg.check(custom, folder)))
-    custom.data.electrode_order = "V1, V2"
-    assert any(e.field == "data.electrode_order" for e in _errors(ecg.check(custom, folder)))
+    params.data.heart_mesh = "ventricles"
+    assert any(e.field == "data.heart_mesh" for e in _errors(ecg.check(params, folder)))
+    params.data.electrode_order = "V1, V2"
+    assert any(e.field == "data.electrode_order" for e in _errors(ecg.check(params, folder)))
 
 
 def test_ecg_without_gradients_has_no_heterogeneity():
@@ -457,7 +475,7 @@ def test_em_checks():
     assert {"heart.rv_endo", "support.springs.0.surface", "heart.pericardium_scale",
             "rhythm.pacing.0.site", INPUT} <= fields  # the mesh is the input folder's own
     no_mesh = [e.message for e in _errors(em.check(params, _heart_folder(mesh_name=None)))]
-    assert no_mesh == ["The input folder has no openCARP mesh (.pts, .elem, .lon)."]
+    assert no_mesh == ["The input folder has no mesh (.pts, .elem, .lon)."]
     two = _heart_folder(files=[*_heart_folder().files, "coarse.pts", "coarse.elem"])
     assert [(i.field, i.message) for i in em.check(params, two) if i.severity == Severity.WARNING
             and i.field == INPUT] == [(INPUT, "The input folder holds 2 meshes; the run reads "
@@ -548,15 +566,17 @@ def _check_surface(run: Path) -> dict:
 
 @pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCHCOR, reason="TorchCor is not installed")
-def test_ep_slab_runs_end_to_end(tmp_path):
-    params = ep.EPParams()
-    params.geometry.dx = 1.0
-    params.geometry.corner = 2.0
+def test_ep_runs_end_to_end_on_a_mesh_folder(tmp_path):
+    from torchcor_studio.runtime import tcs_runtime, tcs_studio
+
+    mesh = tcs_studio.make_slab_mesh(tmp_path / "mesh", dx=1.0, corner=2.0)  # a small block, one region
+    params = ep.EPParams(cells=[ep.CellGroup()], model=ep.EPModel(conductivities=[ep.Conductivity()]),
+                         stimuli=[ep.Stimulus(site="stimulus.vtx")])
     params.timing.duration = 30.0
     params.numerics.precision = "float64"
-    assert not _errors(ep.check(params, None))
+    assert not _errors(ep.check(params, InputInfo.from_dict(tcs_runtime.inspect_dir(str(mesh)))))
     run = tmp_path / "ep-run"
-    status = _launch(run, "ep", params)
+    status = _launch(run, "ep", params, input_dir=str(mesh))
     assert status["stage"] == "done" and status["progress"] == 1.0
     assert status["sim_total"] == 30.0
     assert "activated" in status["metrics"]

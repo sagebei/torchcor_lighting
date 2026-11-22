@@ -36,11 +36,16 @@ ICON = {Severity.ERROR: ("x-circle", "danger"), Severity.WARNING: ("alert", "war
         Severity.INFO: ("info", "info")}
 
 
+#: How far a group's panels sit in from its heading in the outline.
+INDENT = 14
+
+
 class OutlineView(QWidget):
     """The panels in page order, painted (no widget per row): the current one highlighted,
-    error and warning counts, an edited dot and a chevron for a collapsed panel. A click,
-    or Enter on the focused row, asks to :attr:`jump` to that panel. In ``flow`` mode (a
-    narrow page) the panels are chips that wrap, with no current one."""
+    error and warning counts, an edited dot and a chevron for a collapsed panel; a group's
+    heading, then its panels indented along a guide line. A click, or Enter on the focused
+    row, asks to :attr:`jump` to that panel (or group). In ``flow`` mode (a narrow page) the
+    panels are chips that wrap, with no current one and no group headings."""
 
     jump = Signal(str)  # panel key
     HEAD, GAP, ROW = 16, 6, 24
@@ -69,6 +74,10 @@ class OutlineView(QWidget):
 
     def entries(self) -> list[OutlineEntry]:
         return list(self._entries)
+
+    def _rows(self) -> list[OutlineEntry]:
+        """The entries shown: all of them, or in flow mode the panels alone."""
+        return [e for e in self._entries if not (self._flow and e.group)]
 
     def set_current(self, key: str) -> None:
         if key != self._current:
@@ -101,7 +110,7 @@ class OutlineView(QWidget):
         if self._flow:
             width = self.width() or 600
             return QSize(width, self.heightForWidth(width))
-        return QSize(240, self.HEAD + self.GAP + self.ROW * len(self._entries))
+        return QSize(240, self.HEAD + self.GAP + self.ROW * len(self._rows()))
 
     def _fonts(self) -> tuple[QFont, QFont, QFont, QFont]:
         eyebrow = QFont(self.font())
@@ -126,7 +135,7 @@ class OutlineView(QWidget):
         _eyebrow, row, _current, pill = self._fonts()
         fm = QFontMetrics(row)
         out, x, y = [], 0.0, 0.0
-        for entry in self._entries:
+        for entry in self._rows():
             w = 20 + fm.horizontalAdvance(entry.title) + (10 if entry.edited else 0) + self._markers(entry, pill)
             if x and x + w > width:
                 x, y = 0.0, y + self.CHIP + self.CHIP_GAP
@@ -138,7 +147,7 @@ class OutlineView(QWidget):
         if self._flow:
             return self._chips(self.width())
         return [QRectF(0, self.HEAD + self.GAP + i * self.ROW, self.width(), self.ROW)
-                for i in range(len(self._entries))]
+                for i in range(len(self._rows()))]
 
     def _index_at(self, point: QPointF) -> int:
         return next((i for i, rect in enumerate(self._rects()) if rect.contains(point)), -1)
@@ -153,9 +162,14 @@ class OutlineView(QWidget):
             painter.setFont(eyebrow)
             painter.setPen(p.qcolor("text3"))
             painter.drawText(QRectF(8, 0, self.width() - 8, self.HEAD), Qt.AlignmentFlag.AlignVCenter, "OUTLINE")
-        for i, (entry, rect) in enumerate(zip(self._entries, self._rects(), strict=True)):
+        for i, (entry, rect) in enumerate(zip(self._rows(), self._rects(), strict=True)):
             current = entry.key == self._current and not self._flow
             radius = rect.height() / 2 if self._flow else 6
+            indent = 0.0 if self._flow else INDENT * entry.depth
+            if indent:  # the guide line of a group's panels, beside their rows
+                painter.setPen(QPen(p.qcolor("line2"), 1))
+                painter.drawLine(QPointF(rect.x() + 12.5, rect.top()), QPointF(rect.x() + 12.5, rect.bottom()))
+                rect = rect.adjusted(indent, 0, 0, 0)
             if current or i == self._hover or self._flow:
                 fill = QColor(p.accent) if current else QColor(p.bg3 if i == self._hover or not self._flow
                                                                else p.bg2)
@@ -223,16 +237,16 @@ class OutlineView(QWidget):
         index = self._index_at(event.position())
         if index >= 0 and event.button() == Qt.MouseButton.LeftButton:
             self._focus = index
-            self.jump.emit(self._entries[index].key)
+            self.jump.emit(self._rows()[index].key)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        key = event.key()
-        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right) and self._entries:
+        key, rows = event.key(), self._rows()
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right) and rows:
             step = -1 if key in (Qt.Key.Key_Up, Qt.Key.Key_Left) else 1
-            self._focus = max(0, min(len(self._entries) - 1, self._focus + step))
+            self._focus = max(0, min(len(rows) - 1, self._focus + step))
             self.update()
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space) and self._entries:
-            self.jump.emit(self._entries[self._focus].key)
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space) and rows:
+            self.jump.emit(rows[min(self._focus, len(rows) - 1)].key)
         else:
             super().keyPressEvent(event)
 
@@ -250,7 +264,7 @@ class OutlineView(QWidget):
         if event.type() == QEvent.Type.ToolTip:
             index = self._index_at(QPointF(event.pos()))
             if index >= 0:
-                entry = self._entries[index]
+                entry = self._rows()[index]
                 QToolTip.showText(event.globalPos(), entry.title + (f": {entry.summary}" if entry.collapsed
                                                                     and entry.summary else ""), self)
             else:

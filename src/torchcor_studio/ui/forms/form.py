@@ -52,7 +52,7 @@ from torchcor_studio.ui.forms.grid import (
     grid_widget,
     natural_span,
 )
-from torchcor_studio.ui.forms.panel import PanelCard
+from torchcor_studio.ui.forms.panel import PanelCard, PanelGroup
 from torchcor_studio.ui.forms.table import TableEditor
 from torchcor_studio.ui.widgets import Card, chain_focus, label
 
@@ -71,7 +71,8 @@ class _Field:
 
 @dataclass(frozen=True)
 class OutlineEntry:
-    """A panel as the Setup step's outline lists it."""
+    """A panel as the Setup step's outline lists it, or (``group``) the heading of a group,
+    whose panels follow it at ``depth`` 1."""
 
     key: str
     title: str
@@ -80,6 +81,8 @@ class OutlineEntry:
     edited: bool
     collapsed: bool
     summary: str
+    depth: int = 0
+    group: bool = False
 
 
 def _set(data: Any, path: Sequence[Any], value: Any) -> None:
@@ -150,12 +153,20 @@ class ParamForm(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(12)
         self._cards: dict[str, PanelCard] = {}
+        self._groups: dict[str, PanelGroup] = {}
         for panel in self._resolved:
             card = PanelCard(panel, self._build_panel, expanded=not panel.collapsed)
             card.toggled.connect(lambda on, k=panel.key: self._toggled(k, on))
             card.advanced_toggled.connect(lambda on, k=panel.key: self._advanced_toggled(k, on))
             self._cards[panel.key] = card
-            lay.addWidget(card)
+            if panel.group is None:
+                lay.addWidget(card)
+                continue
+            box = self._groups.get(panel.group.key)
+            if box is None:
+                box = self._groups[panel.group.key] = PanelGroup(panel.group)
+                lay.addWidget(box)
+            box.add(card)
         lay.addStretch(1)
         self._refresh_panels()
 
@@ -201,6 +212,10 @@ class ParamForm(QWidget):
     def cards(self) -> list[PanelCard]:
         return list(self._cards.values())
 
+    def anchor(self, key: str) -> QWidget:
+        """What the outline's ``key`` stands for on the page: a panel, or a group's box."""
+        return self._groups.get(key) or self._cards[key]
+
     def expand_all(self) -> None:
         for card in self._cards.values():
             card.expand()
@@ -218,9 +233,15 @@ class ParamForm(QWidget):
         return self._advanced.get(panel, False) or self._auto_advanced.get(panel, False)
 
     def outline_entries(self) -> list[OutlineEntry]:
-        return [OutlineEntry(p.key, p.title, *self._counts.get(p.key, (0, 0)), self._cards[p.key].edited,
-                             not self._cards[p.key].is_expanded(), self._cards[p.key].summary)
-                for p in self._resolved]
+        """The panels in page order, each group's heading before its panels."""
+        entries: list[OutlineEntry] = []
+        for i, p in enumerate(self._resolved):
+            if p.group is not None and (i == 0 or self._resolved[i - 1].group != p.group):
+                entries.append(OutlineEntry(p.group.key, p.group.title, 0, 0, False, False, "", group=True))
+            card = self._cards[p.key]
+            entries.append(OutlineEntry(p.key, p.title, *self._counts.get(p.key, (0, 0)), card.edited,
+                                        not card.is_expanded(), card.summary, depth=int(p.group is not None)))
+        return entries
 
     def has_slot(self, name: str = INPUT) -> bool:
         """Does a panel hold the ``name`` slot (``INPUT`` or ``OUTPUT``)?"""
@@ -304,8 +325,10 @@ class ParamForm(QWidget):
         return body
 
     def _fields_block(self, grid, block: Block, panel: str) -> None:  # noqa: ANN001
-        """A block's eyebrow, then its fields; consecutive fields of one group form a tile,
-        and a choice that later fields depend on ends its row (the law, then its constants)."""
+        """A block's eyebrow, then its fields; consecutive fields of one group form a tile.
+        A choice that later fields depend on ends its row (the law, then its constants), and
+        so does a switch that all the later fields of its section depend on (pre-pacing on,
+        then its settings below it, where they appear without moving the switch)."""
         if block.eyebrow:
             heading = Heading(block.eyebrow, block.caption, block.tip)
             grid.add(heading, span=0, role="heading")
@@ -317,9 +340,10 @@ class ParamForm(QWidget):
             f = self._make_field(leaf, panel, short=bool(group))
             if not group:
                 tile = None
-                controls = (ftype.kind == "choice" or bool(meta.get("choices"))) and any(
-                    lf[:-1] == leaf[:-1] and leaf[-1] in (self._metas[lf][0].get("visible_if") or {})
-                    for lf in block.leaves[i + 1:])
+                later = [lf for lf in block.leaves[i + 1:] if lf[:-1] == leaf[:-1]]
+                gated = [lf for lf in later if leaf[-1] in (self._metas[lf][0].get("visible_if") or {})]
+                choice = ftype.kind == "choice" or bool(meta.get("choices"))
+                controls = bool(gated) and (choice or (ftype.kind == "bool" and len(gated) == len(later)))
                 grid.add(f.cell, span=f.span, brk=i == 0, end=controls)
                 continue
             if tile is None or tile_key != (leaf[:-1], group):

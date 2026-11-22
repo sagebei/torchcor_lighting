@@ -152,4 +152,7 @@ jobs:
           generate_release_notes: true
           # v1.2.0-rc1, v1.2.0-beta ... are published as pre-releases
           prerelease: ${{ contains(github.ref_name, '-') }}
+          # The website's links fall back to /releases/latest: keep it on the newest app
+          # release (a demo data release, data-v*, should be published as a pre-release).
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
           fail_on_unmatched_files: true

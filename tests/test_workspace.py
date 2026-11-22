@@ -170,12 +170,27 @@ def test_closing_tabs(window, qtbot, monkeypatch) -> None:
     win._close_tab(win.machines)
     win._close_tab(draft)  # nothing set up: closes without asking
     qtbot.wait(10)
-    assert [win.workspace.kind(p) for p in win.workspace.pages()] == ["draft"]  # never empty
+    assert not win.workspace.pages() and win.workspace.empty.isVisible()  # no new draft in its place
+    win.workspace.empty_menu.chosen.emit("ecg")  # its New simulation button
     named = win.new_run
+    assert named.setup.kind == "ecg" and not win.workspace.empty.isVisible()
     named.set_name("Keep me")
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel)
     win._close_tab(named)  # it has a name: asks first, and Cancel keeps it
     assert named in win.workspace.pages()
+
+
+def test_discarding_the_only_draft_leaves_no_draft(window, qtbot, monkeypatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    win = window
+    draft = win.new_run
+    draft.set_name("EP")  # as the user named it: discarding asks first
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Close)
+    assert _sidebar_rows(win).count("draft:EP") == 1 and win.workspace.pages() == [draft]
+    win.sidebar.draft_action.emit("discard", draft.draft_id)
+    qtbot.wait(10)
+    assert not win.workspace.pages() and not any(row.startswith("draft:") for row in _sidebar_rows(win))
 
 
 def _fake_run(root: Path, name: str) -> Path:
@@ -211,14 +226,14 @@ def test_a_stopped_run_is_set_up_again_in_its_tab(window, qtbot, tmp_path: Path)
         return run
 
     done = record("Done", RunState.COMPLETED)
-    win.show_run(done, tab="Overview", keep=True)
+    win.show_run(done, tab="Overview")
     page = win.workspace.current()
     assert isinstance(page, RunPage) and not page.edit_btn.isVisibleTo(page)
     page.steps.step_clicked.emit(1)  # Setup of a completed run: what it ran
     assert win.workspace.current() is page and page._view == "Parameters"
 
     stopped = record("Atrium pacing", RunState.CANCELLED)
-    win.show_run(stopped, tab="Overview", keep=True)
+    win.show_run(stopped, tab="Overview")
     page = win.workspace.current()
     assert page.edit_btn.isVisibleTo(page)  # "Edit and run again" on the stopped banner
     index = win.pages.indexOf(page)
@@ -232,28 +247,32 @@ def test_a_stopped_run_is_set_up_again_in_its_tab(window, qtbot, tmp_path: Path)
     assert "draft:Atrium pacing" in _sidebar_rows(win)
 
     failed = record("Broken", RunState.FAILED)
-    win.show_run(failed, tab="Overview", keep=True)
+    win.show_run(failed, tab="Overview")
     win.workspace.current().edit_btn.click()  # from the banner: the Setup step
     again = win.workspace.current()
     assert isinstance(again, NewRunPage) and again.name() == "Broken" and again._step == 1
 
 
-def test_runs_open_in_a_preview_tab_unless_kept(window, qtbot, tmp_path: Path) -> None:
+def test_each_run_opens_in_a_tab_of_its_own(window, qtbot, tmp_path: Path) -> None:
     from torchcor_studio.core.models import RunRecord, RunState, RunStatus
 
     win = window
     records = [RunRecord(id=n, name=n, kind="ep", machine_id="local", run_dir=str(_fake_run(tmp_path, n)),
-                         created_at=time.time(), status=RunStatus(state=RunState.FAILED)) for n in ("one", "two")]
+                         created_at=time.time(), status=RunStatus(state=RunState.FAILED))
+               for n in ("one", "two", "three")]
     for record in records:
         win.ctx.history.upsert(record)
-    win.show_run(records[0], tab="Overview")
-    preview = win.workspace.current()
-    assert win.workspace.is_preview(preview) and win.pages.tabText(win.pages.indexOf(preview)) == "one"
-    win.show_run(records[1], tab="Overview")  # browsing reuses the preview tab
-    assert win.workspace.current() is preview and len(win.workspace.pages("run")) == 1
-    assert win.pages.tabText(win.pages.indexOf(preview)) == "two" and preview.record.key == records[1].key
-    win.show_run(records[0], tab="Overview", keep=True)  # double-click: its own tab
-    assert len(win.workspace.pages("run")) == 2 and not win.workspace.is_preview(win.workspace.current())
+
+    def run_tabs() -> list[str]:
+        return [win.pages.tabText(win.pages.indexOf(p)) for p in win.workspace.pages("run")]
+
+    for record in records:
+        win.sidebar.run_selected.emit(record)  # a click in the sidebar
+        assert win.workspace.current().record.key == record.key
+    assert run_tabs() == ["one", "two", "three"]
+    first = win.workspace.find("run", records[0].key)
+    win.sidebar.run_selected.emit(records[0])  # open already: its tab comes to the front
+    assert win.workspace.current() is first and run_tabs() == ["one", "two", "three"]
 
 
 def test_a_launched_draft_becomes_the_run_tab(window, qtbot, tmp_path: Path) -> None:
@@ -285,7 +304,7 @@ def test_a_runs_page_goes_through_the_steps(window, qtbot, tmp_path: Path) -> No
                        created_at=time.time(), status=RunStatus(state=RunState.RUNNING, started_at=time.time()),
                        manifest={"input_dir": "/data/ep/slab", "output_dir": "/runs", "python": "/py/bin/python"})
     win.ctx.history.upsert(record)
-    win.show_run(record, keep=True)
+    win.show_run(record)
     page = win.workspace.current()
 
     def tabs() -> list[str]:

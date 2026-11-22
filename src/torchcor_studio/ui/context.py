@@ -7,6 +7,7 @@ work runs on the worker pool; results come back as Qt signals on the UI thread.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -47,6 +48,24 @@ class MachineState(StrEnum):
 
 
 @dataclass
+class DataDownload:
+    """The demo data being downloaded onto a machine (the runtime's ``fetch-data``)."""
+
+    dest: str  # the folder it goes into, as <dest>/torchcor_data
+    stage: str = "starting"  # then "download", "unzip"; and at last "done", "failed" or "cancelled"
+    done: int = 0  # bytes downloaded or unzipped
+    total: int = 0
+    version: str = ""  # "data-v1.0"
+    path: str = ""  # the data folder, once done
+    error: str = ""
+    stop: threading.Event = field(default_factory=threading.Event)
+
+    @property
+    def active(self) -> bool:
+        return self.stage in ("starting", "download", "unzip")
+
+
+@dataclass
 class MachineSession:
     profile: MachineProfile
     machine: Machine | None = None
@@ -57,6 +76,8 @@ class MachineSession:
     suggestion: PythonCandidate | None = None
     #: The machine's TorchCor data folder (``~/torchcor_data``), if it has one.
     data_folders: DataFolders | None = None
+    #: The demo data download started from the Compute step, while it runs and after.
+    download: DataDownload | None = None
     samples: list[GPUSample] = field(default_factory=list)
     monitor: Any = None
     watchers: int = 0
@@ -90,6 +111,7 @@ class AppContext(QObject):
     run_updated = Signal(object)  # RunRecord
     projects_changed = Signal()
     notify = Signal(str, str, str)  # title, message, tone
+    demo_data_changed = Signal(str)  # machine id: a download moved on, or ended
 
     POLL_MS = 2000
 
@@ -191,6 +213,70 @@ class AppContext(QObject):
 
         run_async(work, on_done=done, on_error=failed, owner=self)
 
+    # ================================================================== demo data
+    def fetch_demo_data(self, machine_id: str, dest: str) -> None:
+        """Download the newest demo data release into ``dest`` on the machine (``fetch-data``,
+        on the worker pool), then make ``<dest>/torchcor_data`` its data folder. Progress
+        and the end come as :attr:`demo_data_changed`; one download at a time per machine."""
+        sess = self.session(machine_id)
+        machine = self.machine(machine_id)
+        if machine is None or (sess.download is not None and sess.download.active):
+            return
+        job = sess.download = DataDownload(dest)
+        last_line = [""]  # a failure's message: the runtime's last plain line
+
+        def on_line(line: str) -> None:  # on the worker: the signal reaches the UI thread queued
+            try:
+                event = json.loads(line)
+            except ValueError:
+                if line.strip():
+                    last_line[0] = line.strip()
+                return
+            if not isinstance(event, dict):
+                return
+            if "progress" in event:
+                job.stage, job.version = str(event["progress"]), str(event.get("version", ""))
+                job.done, job.total = int(event.get("done") or 0), int(event.get("total") or 0)
+            elif event.get("ok"):
+                job.path, job.version = str(event.get("path", "")), str(event.get("version", job.version))
+            elif event.get("error"):
+                job.error = str(event["error"])
+            self.demo_data_changed.emit(machine_id)
+
+        def work() -> DataFolders | None:
+            script = machine.join(machine.runtime_dir(), "tcs_runtime.py")
+            code = machine.stream([machine.python, script, "fetch-data", dest], on_line, job.stop)
+            if code != 0 or not job.path:
+                job.error = job.error or last_line[0] or f"fetch-data ended with code {code}"
+                return None
+            machine.profile.data_dir = job.path
+            return find_data_folders(machine)
+
+        def done(found: DataFolders | None) -> None:
+            if job.path and not job.error:
+                job.stage = "done"
+                profile = self.store.machine(machine_id)
+                if profile is not None:
+                    profile.data_dir = job.path
+                    self.store.upsert_machine(profile)
+                sess.data_folders = found
+                self.machine_state_changed.emit(machine_id)  # the Setup step's folders follow
+            else:
+                job.stage = "cancelled" if job.stop.is_set() else "failed"
+            self.demo_data_changed.emit(machine_id)
+
+        def failed(exc: BaseException) -> None:
+            job.stage, job.error = "failed", str(exc) or type(exc).__name__
+            self.demo_data_changed.emit(machine_id)
+
+        self.demo_data_changed.emit(machine_id)
+        run_async(work, on_done=done, on_error=failed, owner=self)
+
+    def cancel_demo_data(self, machine_id: str) -> None:
+        sess = self._sessions.get(machine_id)
+        if sess is not None and sess.download is not None and sess.download.active:
+            sess.download.stop.set()
+
     def _after_connect(self, machine_id: str, callback: Callable[[MachineSession], None]) -> None:
         def handler(mid: str) -> None:
             if mid != machine_id:
@@ -240,6 +326,8 @@ class AppContext(QObject):
     def shutdown(self) -> None:
         self._poller.stop()
         for sess in self._sessions.values():
+            if sess.download is not None:
+                sess.download.stop.set()  # a download in flight ends with the app
             self._stop_monitor(sess)
             if sess.machine is not None:
                 try:

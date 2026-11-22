@@ -44,11 +44,11 @@ def test_values_update_in_place(themed, qtbot) -> None:
     duration = form.editor(("timing", "duration"))
     cells, stimuli = form.table(("cells",)), form.table(("stimuli",))
     cell_model, site = cells.cell(0, "model"), stimuli.cell(0, "site")
-    form.set_value(ep.ventricle())
+    form.set_value(ep.atrium())  # from the defaults (the ventricle) to the atrium
     assert form.editor(("timing", "duration")) is duration and duration.get() == 500.0
     assert cells.cell(0, "model") is cell_model  # same row count: the cells stay
-    assert stimuli.cell(0, "site") is not site and stimuli.row_count() == 5  # five rows now
-    assert form.value() == ep.ventricle() and form.data()["stimuli"][4]["site"] == "RV_mod.vtx"
+    assert stimuli.cell(0, "site") is not site and stimuli.row_count() == 1  # one row now, not five
+    assert form.value() == ep.atrium() and form.data()["stimuli"][0]["site"] == ""
 
 
 def test_fixed_tables_have_row_headers_and_no_add_or_remove(themed, qtbot) -> None:
@@ -313,3 +313,35 @@ def test_input_folder_issues_go_to_the_slot(themed, qtbot) -> None:
     assert form.reveal(INPUT) is slot.edit
     form.mark_issues([])
     assert slot.issue is None
+
+
+def test_a_section_switch_keeps_its_row_and_its_settings_follow_below(themed, qtbot) -> None:
+    """Pre-pacing's switch ends its row: turning it on shows its settings side by side on
+    the next row, and the switch does not move. A switch that gates one field of several
+    (VTK frames: its frame step) keeps that field beside it."""
+    from PySide6.QtCore import QPoint
+
+    form = _form(qtbot, "ep")
+    form.panel("time-and-outputs").expand()
+
+    def cell(*path: str):  # noqa: ANN202
+        return form._fields[path].cell
+
+    def top(*path: str) -> int:
+        return cell(*path).mapTo(form, QPoint(0, 0)).y()
+
+    def turn_on(path: tuple[str, str], shows: tuple[str, str]) -> None:
+        editor = form.editor(path)
+        editor.set(True)
+        editor.emit()
+        qtbot.waitUntil(cell(*shows).isVisible, timeout=3000)
+        qtbot.wait(20)  # the grid lays the new fields out
+
+    switch = top("prepace", "enabled")
+    turn_on(("prepace", "enabled"), ("prepace", "cycle_length"))
+    assert top("prepace", "enabled") == switch  # the switch stays put
+    assert top("prepace", "cycle_length") >= switch + cell("prepace", "enabled").height()  # below it
+    assert top("prepace", "beats") == top("prepace", "cycle_length")  # side by side
+    assert cell("prepace", "beats").x() > cell("prepace", "cycle_length").x()
+    turn_on(("outputs", "vtk"), ("outputs", "vtk_step"))
+    assert top("outputs", "vtk_step") <= top("outputs", "vtk") + cell("outputs", "vtk").height()  # beside it

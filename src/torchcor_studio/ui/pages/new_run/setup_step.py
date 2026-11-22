@@ -34,6 +34,7 @@ from torchcor_studio.core.simulations.panels import INPUT, OUTPUT, owner
 from torchcor_studio.core.sweep import numeric_parameters
 from torchcor_studio.ui import kinds
 from torchcor_studio.ui.forms import ParamForm
+from torchcor_studio.ui.forms.panel import PanelCard
 from torchcor_studio.ui.pages.new_run.demo_picker import DemoPicker
 from torchcor_studio.ui.pages.new_run.folders import Folders
 from torchcor_studio.ui.pages.new_run.rail import SetupRail
@@ -297,9 +298,9 @@ class SetupStep(QWidget):
         return not state.touched and state.form.value() == state.baseline
 
     def _fit_folder(self, kind: str) -> None:
-        """Fit what depends on the input folder. A new folder switches an untouched set-up to
-        what the folder holds (``fit_input``'s ``new_input``: EP's slab becomes the folder's
-        mesh), and the status line then says so; a re-inspection never does."""
+        """Fit what depends on the input folder. A new folder may switch an untouched set-up
+        to what the folder holds (``fit_input``'s ``new_input``), and the status line then
+        says so; a re-inspection never does."""
         state, spec, info = self._states[kind], self._specs[kind], self._input
         params = state.form.value()
         if info is None or spec.fit_input is None or params is None:
@@ -439,10 +440,12 @@ class SetupStep(QWidget):
             QTimer.singleShot(0, self, lambda: self._show(widget))
 
     def reveal_panel(self, key: str) -> None:
-        """Open a panel and scroll its top just below the top of the viewport."""
-        card = self.form().panel(key)
-        card.expand()
-        QTimer.singleShot(0, self, lambda: self._scroll_to(card, JUMP_OFFSET))
+        """Open a panel (or go to a group's box) and scroll its top just below the top of
+        the viewport."""
+        target = self.form().anchor(key)
+        if isinstance(target, PanelCard):
+            target.expand()
+        QTimer.singleShot(0, self, lambda: self._scroll_to(target, JUMP_OFFSET))
 
     def reveal_first_error(self) -> None:
         for issue in self._issues:

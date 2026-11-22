@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import sysconfig
@@ -273,3 +274,85 @@ def test_unloading_iterations_become_the_message(tmp_path: Path) -> None:
     parser.feed("iteration 3: largest mismatch 0.0123, mean 0.004, lv 0.53%, step 1")
     assert parser.message == "iteration 3 · largest mismatch 0.0123"
     assert parser.progress is None
+
+
+# ------------------------------------------------------------------ demo data
+def _fake_github(monkeypatch, zip_bytes: bytes, *, releases: list[dict] | None = None, digest: str | None = None):
+    """``rt._http`` answering the releases API and the zip download from memory."""
+    import hashlib
+    import io
+
+    sha = hashlib.sha256(zip_bytes).hexdigest() if digest is None else digest
+    asset = {"name": "torchcor_data.zip", "size": len(zip_bytes), "digest": f"sha256:{sha}",
+             "browser_download_url": "https://example.test/data-v1.2/torchcor_data.zip"}
+    listing = releases if releases is not None else [
+        {"tag_name": "v0.1.0", "assets": [{"name": "app.zip"}]},
+        {"tag_name": "data-v1.2", "assets": [asset]},
+        {"tag_name": "data-v1.10", "draft": True, "assets": [asset]},  # a draft is not released
+        {"tag_name": "data-v1.0", "assets": [asset]},
+    ]
+
+    class Response(io.BytesIO):
+        def __init__(self, data: bytes) -> None:
+            super().__init__(data)
+            self.headers = {"Content-Length": str(len(data))}
+
+    def http(url: str, accept: str = "application/json") -> Response:
+        if url.startswith("https://api.github.com/repos/"):
+            return Response(json.dumps(listing).encode())
+        assert url == asset["browser_download_url"], url
+        return Response(zip_bytes)
+
+    monkeypatch.setattr(rt, "_http", http)
+
+
+def _data_zip(members: dict[str, bytes]) -> bytes:
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+    return buffer.getvalue()
+
+
+def test_fetch_data_downloads_the_newest_data_release_and_unzips_it(tmp_path, monkeypatch, capsys) -> None:
+    data = _data_zip({"torchcor_data/input/ep/ventricle/Case_1.pts": b"1\n0 0 0\n",
+                      "torchcor_data/output/ep/ventricle/": b""})
+    _fake_github(monkeypatch, data)
+    old_run = tmp_path / "torchcor_data" / "output" / "ep" / "ventricle" / "my-run" / "run.log"
+    old_run.parent.mkdir(parents=True)
+    old_run.write_text("kept")  # a run of an older data version
+    assert rt.main(["fetch-data", str(tmp_path)]) == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+    result = lines[-1]
+    assert result == {"ok": True, "version": "data-v1.2", "path": str(tmp_path / "torchcor_data"), "bytes": len(data)}
+    stages = {line["progress"] for line in lines[:-1]}
+    assert stages == {"download", "unzip"} and lines[0]["version"] == "data-v1.2"  # newest, not drafts
+    folder = tmp_path / "torchcor_data"
+    assert (folder / "input" / "ep" / "ventricle" / "Case_1.pts").read_bytes() == b"1\n0 0 0\n"
+    assert json.loads((folder / ".version").read_text()) == {"version": "data-v1.2", "repo": rt.DATA_REPO}
+    assert old_run.read_text() == "kept" and not list(tmp_path.glob("*.zip*"))  # zip deleted
+
+
+@pytest.mark.parametrize(("case", "message"), [
+    ("damaged", "SHA-256 does not match"),
+    ("escape", "unexpected path in the zip"),
+    ("private", "the repository must be public"),
+    ("none", "has no data-v* release"),
+])
+def test_fetch_data_refuses_what_it_cannot_trust(tmp_path, monkeypatch, case: str, message: str) -> None:
+    import urllib.error
+
+    data = _data_zip({"torchcor_data/input/x.txt": b"x"} if case != "escape" else {"../evil.txt": b"x"})
+    _fake_github(monkeypatch, data, digest="0" * 64 if case == "damaged" else None,
+                 releases=[{"tag_name": "v0.1.0", "assets": []}] if case == "none" else None)
+    if case == "private":
+        def private(url: str, accept: str = "") -> None:
+            raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+        monkeypatch.setattr(rt, "_http", private)
+    with pytest.raises(SystemExit, match=re.escape(message)):
+        rt.cmd_fetch_data([str(tmp_path)])
+    assert not (tmp_path.parent / "evil.txt").exists() and not list(tmp_path.glob("*.zip*"))

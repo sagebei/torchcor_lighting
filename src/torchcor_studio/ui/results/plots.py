@@ -34,6 +34,18 @@ def _font(px: int = TICK_PX, weight: QFont.Weight = QFont.Weight.Normal) -> QFon
     return font
 
 
+def grid_ink(p: Palette) -> tuple[QColor, float]:
+    """``p.grid`` as an opaque colour and the smallest alpha with which it looks the same
+    over ``p.plot_bg``. The axes draw their grid lines above the data: opaque lines would cut
+    every curve they cross (a dashed look); these only tint it."""
+    grid, bg = QColor(p.grid), QColor(p.plot_bg)
+    pairs = [(grid.red(), bg.red()), (grid.green(), bg.green()), (grid.blue(), bg.blue())]
+    alpha = max((g - b) / (255 - b) if g > b else (b - g) / b if g < b else 0.0 for g, b in pairs)
+    if alpha <= 0.0:
+        return grid, 1.0
+    return QColor(*(min(255, max(0, round(b + (g - b) / alpha))) for g, b in pairs)), alpha
+
+
 def style_plot(item: pg.PlotItem, p: Palette, *, grid_x: bool = False, grid_y: bool = True,
                x_label: tuple[str, str] | None = None, y_label: tuple[str, str] | None = None) -> None:
     """Token styling for a ``PlotItem``: quiet axes, hairline grid, 11 px tick labels.
@@ -41,14 +53,15 @@ def style_plot(item: pg.PlotItem, p: Palette, *, grid_x: bool = False, grid_y: b
     ``x_label`` / ``y_label`` are ``(text, unit)`` pairs.
     """
     item.getViewBox().setBackgroundColor(QColor(p.plot_bg))
+    ink, ink_alpha = grid_ink(p)
     for name, grid, label in (("left", grid_y, y_label), ("bottom", grid_x, x_label)):
         axis = item.getAxis(name)
         axis.setPen(pg.mkPen(QColor(p.line2), width=1))
         axis.setTextPen(pg.mkPen(QColor(p.text3)))
-        axis.setTickPen(pg.mkPen(QColor(p.grid if grid else p.line2), width=1))
+        axis.setTickPen(pg.mkPen(ink if grid else QColor(p.line2), width=1))
         axis.setGrid(255 if grid else False)
         axis.setStyle(tickFont=_font(), tickTextOffset=6, tickLength=0 if grid else 4,
-                      tickAlpha=1.0, maxTickLevel=1, autoExpandTextSpace=True)
+                      tickAlpha=ink_alpha if grid else 1.0, maxTickLevel=1, autoExpandTextSpace=True)
         axis.enableAutoSIPrefix(False)
         if label:
             axis.setLabel(text=label[0], units=label[1] or None, color=p.text3, **{"font-size": f"{TICK_PX}px"})

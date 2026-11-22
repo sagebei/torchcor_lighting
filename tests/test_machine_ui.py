@@ -383,7 +383,7 @@ def mesh_folder(tmp_path) -> Path:
 
 def test_mesh_summary(mesh_folder):
     machine = LocalMachine(MachineProfile(name="local"))
-    assert mesh_summary(machine.listdir(str(mesh_folder))) == "openCARP mesh · heart · fibres · 1 .vtx"
+    assert mesh_summary(machine.listdir(str(mesh_folder))) == "Mesh · heart · fibres · 1 .vtx"
     assert mesh_summary(machine.listdir(str(mesh_folder / "pacing"))) is None
 
 

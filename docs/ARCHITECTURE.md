@@ -78,12 +78,16 @@ logs and a compact visualisation bundle.
   run's membership is saved in its manifest (`"project": {"id", "name"}`), so scans bring
   projects back. Deleted projects are remembered, so stale manifests on offline machines
   cannot recreate them.
-* **Data folders** (`core/data_folders.py`): `~/torchcor_data/<kind>/<case>` (or the
-  machine's input folder laid out the same way), listed once when a machine connects.
-  New runs start their input in the folder of their kind, a demo points it at its case
-  (`demo_data`: found, built in, downloaded by the run, missing, or not known until the
-  machine connects), and `SimulationSpec.fit_input` then fills in what depends on the
-  folder, such as EP stimuli defaulting to its first `.vtx`.
+* **Demo data** (`core/data_folders.py`): `~/torchcor_data` (or the machine's
+  `MachineProfile.data_dir`) holds `input/<kind>/<case>` and the matching
+  `output/<kind>/<case>`, listed once when a machine connects. The Compute step's Demo
+  data card downloads it onto the machine: the runtime's `fetch-data` finds the newest
+  `data-v*` release of the repository, checks the zip's SHA-256 and unzips it (run
+  outputs already there are kept). New runs start their input in the folder of their
+  kind, a demo points it at its case (`demo_data`: found, built in, missing, or not known
+  until the machine connects), the output follows an input of the demo data to its
+  output folder unless the user chose one, and `SimulationSpec.fit_input` then fills in
+  what depends on the folder, such as EP stimuli defaulting to its first `.vtx`.
 * **The Setup step** (`ui/pages/new_run/setup_step.py`): the kind as the page's title,
   then the parameters as panels beside a sticky rail (`StickyRow`): an outline of the panels with
   their issue counts, then three cards: the checks, the kind's demos (a list,
@@ -93,9 +97,11 @@ logs and a compact visualisation bundle.
   `panels.INPUT`; issues about the input folder point at `panels.INPUT`, so the folder
   field shows them. The form (`ui/forms`) resolves the kind's `PANELS` into blocks: a
   grid of fields sized by meaning (`FieldGrid`), group tiles, tables whose columns take
-  the width their content needs, and the two folder slots. A collapsed panel is built
-  when first opened, and demos, Reset, Undo, fits and duplicates update the form in
-  place.
+  the width their content needs, and the two folder slots. Consecutive panels can share a
+  `panels.Group` (ECG's "Heart EP": Cells, Models, Pacing sites): one box headed by the
+  group, its panels as sections of it, and in the outline a heading with the panels
+  indented under it. A collapsed panel is built when first opened, and demos, Reset,
+  Undo, fits and duplicates update the form in place.
 * **Choosing a Python** (`core/environment.py`) — `find_pythons` probes every interpreter
   on a machine (packages are located, not imported). It ranks them by
   `PythonCandidate.readiness`: TorchCor on a GPU first, then TorchCor on the CPU, then CUDA
@@ -136,7 +142,7 @@ and the real window over SSH on a 2× RTX 3090 server:
 | EP, biventricle, five pacing sites (monodomain, ten Tusscher–Panfilov), 500 ms | 637k nodes, 2.9M tets | 2.4 min |
 | EP, atrium (Courtemanche), 500 ms | 661k nodes, 1.3M triangles | 4.2 min |
 | EP, biventricle, reaction–eikonal, 500 ms | 637k nodes | 3.9 min |
-| 12-lead ECG, KCL torso 3 (incl. the one-off 122 MB dataset download) | 403k heart nodes | 6.7 min |
+| 12-lead ECG, KCL torso 3 (timed with a one-off 122 MB dataset download) | 403k heart nodes | 6.7 min |
 | Mechanics, Land problem 1 beam | 3k DOF | 16 s |
 | Mechanics, idealised LV beating through one cycle (Aróstica B1) | 4.6k DOF, 400 steps | 79 s |
 

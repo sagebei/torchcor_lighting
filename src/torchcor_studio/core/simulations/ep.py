@@ -1,8 +1,7 @@
 """Electrophysiology: monodomain and reaction–eikonal simulations of cardiac tissue.
 
-The default runs the Niederer et al. (2011) N-version benchmark slab, generated on the
-compute machine, so it needs no input folder. With "Mesh in the input folder" any
-openCARP mesh (``.pts``/``.elem``/``.lon`` plus ``.vtx`` stimulus sites) is used.
+The tissue is the mesh of the input folder (``.pts``/``.elem``/``.lon`` plus ``.vtx``
+stimulus sites); the demos read the biventricle and the atrium of the demo data.
 """
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from __future__ import annotations
 from torchcor_studio.core.models import InputInfo
 from torchcor_studio.core.simulations import codegen, common
 from torchcor_studio.core.simulations.base import (
-    Cost,
     Demo,
     InputUse,
     Issue,
@@ -33,14 +31,10 @@ from torchcor_studio.core.simulations.common import (
 from torchcor_studio.core.simulations.fields import Section, param
 from torchcor_studio.core.simulations.panels import INPUT, OUTPUT, Panel
 
-GEOMETRIES = {"slab": "Built-in slab", "input": "Mesh in the input folder"}
 SOLVERS = {"monodomain": "Monodomain", "eikonal": "Reaction–eikonal",
-           "re_plus": "Reaction–eikonal + diffusion"}
+           "re_plus": "Reaction–eikonal with diffusion"}
 VARIANTS = {"monodomain": "Monodomain", "eikonal": "Reaction–eikonal",
-            "re_plus": "Reaction–eikonal+"}
-#: Stimulus sites written by ``tcs_studio.make_slab_mesh``.
-SLAB_SITES = {"stimulus.vtx": "Corner cube", "left_face.vtx": "Left face (x = 0)"}
-
+            "re_plus": "Reaction–eikonal with diffusion"}
 STAGES = (
     Stage("setup", "Setting up"),
     Stage("mesh", "Preparing the mesh"),
@@ -53,32 +47,11 @@ STAGES = (
 
 # =============================================================================== parameters
 class EPGeometry(Section):
-    """Where the tissue comes from."""
+    """How the mesh of the input folder is read."""
 
-    source: str = param("slab", "Geometry", choices=GEOMETRIES, widget="segmented",
-                        help="The benchmark slab is generated on the compute machine; "
-                             "otherwise the openCARP mesh of the input folder is used.")
-    length: float = param(20.0, "Length (x)", unit="mm", min=0.5, max=500.0, step=1.0,
-                          visible_if={"source": "slab"}, help="Slab size along the fibres.")
-    width: float = param(7.0, "Width (y)", unit="mm", min=0.5, max=500.0, step=1.0,
-                         visible_if={"source": "slab"}, help="Slab size across the fibres.")
-    thickness: float = param(3.0, "Thickness (z)", unit="mm", min=0.5, max=500.0, step=0.5,
-                             visible_if={"source": "slab"}, help="Slab size through the wall.")
-    dx: float = param(0.5, "Element size", unit="mm", min=0.05, max=5.0, step=0.1, decimals=2,
-                      visible_if={"source": "slab"},
-                      help="Edge of the cubes the slab is built from (six tetrahedra each).")
-    corner: float = param(1.5, "Stimulus cube", unit="mm", min=0.1, max=50.0, step=0.5,
-                          visible_if={"source": "slab"},
-                          help="Edge of the corner cube written as stimulus.vtx.")
     unit_conversion: float = param(1000.0, "Coordinate units per mm", min=1e-6, max=1e6,
-                                   visible_if={"source": "input"}, advanced=True,
-                                   help="1000 when .pts coordinates are in µm (openCARP), "
-                                        "1 when they are in mm.")
-
-    def slab_nodes(self) -> int:
-        nx, ny, nz = (max(2, round(v / self.dx) + 1)
-                      for v in (self.length, self.width, self.thickness))
-        return nx * ny * nz
+                                   advanced=True,
+                                   help="1000 when .pts coordinates are in µm, 1 when they are in mm.")
 
 
 class EPModel(Section):
@@ -115,7 +88,7 @@ class EPOutputs(Section):
     vtk: bool = param(False, "VTK frames", help="results/Vm_vtk/*.vtk (and ATs/RTs) for ParaView.")
     vtk_step: int = param(10, "VTK frame step", min=1, max=10000, visible_if={"vtk": True},
                           help="Write every n-th saved frame.")
-    igb: bool = param(False, "IGB file", help="results/Vm.igb for openCARP tools (meshalyzer).")
+    igb: bool = param(False, "IGB file", help="results/Vm.igb: the voltage in IGB format.")
     auto_thresholds: bool = param(True, "Thresholds from the cell model",
                                   help="Use thresholds that suit the cell model's voltage range.")
     activation_threshold: float = param(0.0, "Activation threshold", unit="mV",
@@ -126,16 +99,32 @@ class EPOutputs(Section):
                                             help="First downward crossing after activation.")
 
 
+#: The defaults are the biventricle of the demo data (``demo/ep/monodomain_ventricle.py``):
+#: walls 34/35 and the faster endocardial layer 44-46, paced at five His–Purkinje sites.
+_VENTRICLE_STIMULI = [Stimulus(site=f"{site}.vtx", start=start, duration=1.0, intensity=100.0)
+                      for site, start in (("LV_sf", 0.0), ("LV_pf", 0.0), ("LV_af", 0.0),
+                                          ("RV_sf", 5.0), ("RV_mod", 5.0))]
+
+
+def _ventricle_model() -> EPModel:
+    return EPModel(solver="monodomain", conductivities=[
+        Conductivity(regions=[34, 35], il=0.5272, it=0.2076, el=1.0732, et=0.4227),
+        Conductivity(regions=[44, 45, 46], il=0.9074, it=0.3332, el=0.9074, et=0.3332)])
+
+
 class EPParams(Section):
-    """Electrophysiology parameters."""
+    """Electrophysiology parameters (the defaults: the ventricle demo)."""
 
     geometry: EPGeometry = param(title="Geometry", default_factory=EPGeometry)
-    model: EPModel = param(title="Model", default_factory=EPModel)
-    cells: list[CellGroup] = param(title="Cell models", default_factory=lambda: [CellGroup()],
+    model: EPModel = param(title="Model", default_factory=_ventricle_model)
+    cells: list[CellGroup] = param(title="Cell models",
+                                   default_factory=lambda: [CellGroup(model="TenTusscherPanfilov", cell_type="ENDO")],
                                    item="cell model", help="Ionic model per group of regions.")
     prepace: PrePacing = param(title="Pre-pacing", default_factory=PrePacing)
-    timing: Timing = param(title="Time", default_factory=Timing)
-    stimuli: list[Stimulus] = param(title="Stimuli", default_factory=lambda: [Stimulus()],
+    timing: Timing = param(title="Time", default_factory=lambda: Timing(duration=500.0, dt=0.01,
+                                                                        snapshot_interval=1.0))
+    stimuli: list[Stimulus] = param(title="Stimuli",
+                                    default_factory=lambda: [s.model_copy() for s in _VENTRICLE_STIMULI],
                                     item="stimulus", items="stimuli",
                                     help="Where, when and how strongly the tissue is paced.")
     outputs: EPOutputs = param(title="Outputs", default_factory=EPOutputs)
@@ -152,38 +141,13 @@ class EPParams(Section):
 
 
 # =============================================================================== demos
-def slab() -> EPParams:
-    """Niederer et al. (2011) N-version benchmark slab: the defaults."""
+def ventricle() -> EPParams:
+    """``demo/ep/monodomain_ventricle.py``: biventricle, five His-Purkinje sites (the defaults)."""
     return EPParams()
 
 
-def slab_eikonal() -> EPParams:
-    params = EPParams()
-    params.model = EPModel(solver="eikonal")
-    params.timing = Timing(duration=400.0, dt=0.02)
-    return params
-
-
-_VENTRICLE_STIMULI = [Stimulus(site=f"{site}.vtx", start=start, duration=1.0, intensity=100.0)
-                      for site, start in (("LV_sf", 0.0), ("LV_pf", 0.0), ("LV_af", 0.0),
-                                          ("RV_sf", 5.0), ("RV_mod", 5.0))]
-
-
-def ventricle() -> EPParams:
-    """``demo/ep/monodomain_ventricle.py``: biventricle, five His-Purkinje sites."""
-    return EPParams(
-        geometry=EPGeometry(source="input"),
-        model=EPModel(solver="monodomain", conductivities=[
-            Conductivity(regions=[34, 35], il=0.5272, it=0.2076, el=1.0732, et=0.4227),
-            Conductivity(regions=[44, 45, 46], il=0.9074, it=0.3332, el=0.9074, et=0.3332)]),
-        cells=[CellGroup(model="TenTusscherPanfilov", cell_type="ENDO")],
-        timing=Timing(duration=500.0, dt=0.01, snapshot_interval=1.0),
-        stimuli=[s.model_copy() for s in _VENTRICLE_STIMULI],
-    )
-
-
 def ventricle_eikonal() -> EPParams:
-    """``demo/ep/eikonal_ventricle.py``: R-E with a faster endocardial layer."""
+    """``demo/ep/eikonal_ventricle.py``: reaction–eikonal with a faster endocardial layer."""
     params = ventricle()
     params.model = EPModel(solver="eikonal", velocities=[
         Velocity(regions=[34, 35], vel_l=0.6, vel_t=0.38),
@@ -195,7 +159,6 @@ def ventricle_eikonal() -> EPParams:
 def atrium() -> EPParams:
     """``demo/ep/monodomain_atrium.py``: Courtemanche atrium, effective conductivities."""
     return EPParams(
-        geometry=EPGeometry(source="input"),
         model=EPModel(solver="monodomain", conductivity_mode="monodomain", conductivities=[
             Conductivity(regions=[1, 2, 3, 4, 5, 6], il=0.3, it=0.06)]),
         cells=[CellGroup(model="CourtemancheRamirezNattel")],
@@ -207,12 +170,6 @@ def atrium() -> EPParams:
 
 
 DEMOS = (
-    Demo("slab", "Slab benchmark",
-         "Niederer et al. (2011) N-version slab, 20 × 7 × 3 mm, 100 ms.", slab,
-         cost=Cost.SECONDS, source="Niederer et al. (2011)"),
-    Demo("slab-eikonal", "Slab, reaction–eikonal",
-         "The same slab timed by an eikonal map: no linear solve.", slab_eikonal,
-         cost=Cost.SECONDS),
     Demo("ventricle", "Biventricle, five pacing sites",
          "Ten Tusscher–Panfilov cells paced at five His–Purkinje sites.", ventricle,
          case="ep/ventricle", source="demo/ep/monodomain_ventricle.py"),
@@ -225,7 +182,7 @@ DEMOS = (
 )
 
 PANELS = (
-    Panel("Geometry", "mesh", ("geometry.source", INPUT, "geometry", OUTPUT)),
+    Panel("Geometry", "mesh", (INPUT, "geometry.unit_conversion", OUTPUT)),
     Panel("Cells", "activity", ("cells", "prepace")),
     Panel("Conduction", "wave", ("model",)),
     Panel("Pacing", "zap", ("stimuli",)),
@@ -234,94 +191,57 @@ PANELS = (
 )
 
 
-def input_use(params: EPParams) -> tuple[InputUse, str]:
-    if params.geometry.source == "slab":
-        return "unused", ""
-    return "required", "An openCARP mesh: .pts, .elem and .lon, with .vtx pacing sites."
+def input_use(_params: EPParams) -> tuple[InputUse, str]:
+    return "required", "A mesh: .pts, .elem and .lon, with .vtx pacing sites."
 
 
 # =============================================================================== input
 def fit_input(params: EPParams, info: InputInfo | None, previous: EPParams | None = None, *,
               new_input: bool = False) -> EPParams | None:
-    """Fill in what depends on the input folder.
-
-    * A folder just chosen (``new_input``) that holds a mesh makes the geometry default to
-      it instead of the built-in slab (never the other way round). The Setup step asks for
-      this only for a new folder while the set-up is untouched, so it never overrides a
-      demo, geometry or edit the user chose.
-    * Every stimulus points at a file that exists: the slab's ``stimulus.vtx``, or, for a
-      mesh from the input folder, the folder's first ``.vtx`` (the first that lists nodes).
-      Only sites that do not exist are changed, and only after something that can make
-      them wrong (a new folder, geometry, demo or stimulus row), so a site being typed
-      or a valid choice is never replaced.
-    """
-    fitted = params
-    if new_input and params.geometry.source == "slab" and info is not None and info.has_mesh:
-        fitted = params.model_copy(update={"geometry": params.geometry.model_copy(update={"source": "input"})})
-        previous = None  # the geometry changed: check the sites too
-    if previous is not None and previous.geometry.source == fitted.geometry.source \
-            and len(previous.stimuli) == len(fitted.stimuli):
+    """Fill in what depends on the input folder: every stimulus points at a ``.vtx`` the
+    folder has, its first one (the first that lists nodes) for a site it lacks. Only sites
+    that do not exist are changed, and only after something that can make them wrong (a
+    new folder, demo or stimulus row), so a site being typed or a valid choice is never
+    replaced."""
+    if previous is not None and len(previous.stimuli) == len(params.stimuli):
         return None
-    if fitted.geometry.source == "slab":
-        sites, first = list(SLAB_SITES), "stimulus.vtx"
-    elif info is not None and info.has_mesh and info.vtx:
-        sites = [v.name for v in info.vtx]
-        first = next((v.name for v in info.vtx if v.count), sites[0])
-    else:
-        return fitted if fitted is not params else None  # the folder's sites are not known yet
-    stimuli = [s if s.site in sites else s.model_copy(update={"site": first}) for s in fitted.stimuli]
-    if fitted is params and all(new is old for new, old in zip(stimuli, params.stimuli, strict=True)):
+    if info is None or not info.has_mesh or not info.vtx:
+        return None  # the folder's sites are not known yet
+    sites = [v.name for v in info.vtx]
+    first = next((v.name for v in info.vtx if v.count), sites[0])
+    stimuli = [s if s.site in sites else s.model_copy(update={"site": first}) for s in params.stimuli]
+    if all(new is old for new, old in zip(stimuli, params.stimuli, strict=True)):
         return None
-    return fitted.model_copy(update={"stimuli": stimuli})
+    return params.model_copy(update={"stimuli": stimuli})
 
 
 # =============================================================================== checks
 def check(params: EPParams, info: InputInfo | None) -> list[Issue]:
-    issues: list[Issue] = []
-    slab = params.geometry.source == "slab"
+    issues: list[Issue] = common.mesh_issues(info, INPUT)
     model = params.model
-    regions: list[int] | None = None
-    nodes: int | None = None
-    if slab:
-        nodes = params.geometry.slab_nodes()
-        regions = [1]
-        sites = list(SLAB_SITES)
-        if params.geometry.corner < params.geometry.dx:
-            issues.append(Issue(Severity.WARNING,
-                                "The stimulus cube is smaller than one element: it holds a "
-                                "single node, which may not excite the tissue.",
-                                "geometry.corner"))
-    else:
-        mesh = common.mesh_issues(info, INPUT)
-        issues += mesh
-        ok = info is not None and info.has_mesh
-        regions = info.regions if ok and info.regions else None
-        nodes = info.n_nodes if ok else None
-        sites = [v.name for v in info.vtx] if ok else None
-        if ok:
-            empty = [v.name for v in info.vtx if v.count == 0]
-            for i, stim in enumerate(params.stimuli):
-                if stim.site in empty:
-                    issues.append(Issue(Severity.ERROR, f"{stim.site} lists no nodes.",
-                                        f"stimuli.{i}.site"))
-    where = "the generated slab" if slab else "the input folder"
+    ok = info is not None and info.has_mesh
+    regions = info.regions if ok and info.regions else None
+    nodes = info.n_nodes if ok else None
+    sites = [v.name for v in info.vtx] if ok else None
+    if ok:
+        empty = [v.name for v in info.vtx if v.count == 0]
+        for i, stim in enumerate(params.stimuli):
+            if stim.site in empty:
+                issues.append(Issue(Severity.ERROR, f"{stim.site} lists no nodes.",
+                                    f"stimuli.{i}.site"))
     issues += common.stimulus_issues(params.stimuli, sites, "stimuli", params.timing.duration,
-                                     where)
+                                     "the input folder")
     issues += common.timing_issues(params.timing)
     issues += common.cell_group_issues(params.cells, regions)
     issues += common.cell_dt_issues((g.model for g in params.cells), params.timing.dt, "timing.dt")
     issues += common.prepace_issues(params.prepace, params.cells)
-    fibres = 3 if slab else (info.fibre_columns if info is not None else None)
+    fibres = info.fibre_columns if info is not None else None
     if model.solver in ("monodomain", "re_plus"):
         issues += common.conductivity_issues(model.conductivities, model.conductivity_mode,
                                              regions, "model.conductivities")
     if model.solver in ("eikonal", "re_plus"):
         issues += common.velocity_issues(model.velocities, regions, fibres, "model.velocities")
-        schedules = {(s.period, s.count if s.period > 0 else 1) for s in params.stimuli}
-        if len(schedules) > 1:
-            issues.append(Issue(Severity.ERROR,
-                                "Reaction–eikonal repeats one activation sequence, so every "
-                                "stimulus needs the same period and beats.", "stimuli"))
+        issues += common.eikonal_schedule_issues(params.stimuli, "stimuli")
     history = common.vm_history_issue(params.timing.frames, nodes, params.numerics.precision)
     if history:
         issues.append(history)
@@ -336,7 +256,6 @@ def check(params: EPParams, info: InputInfo | None) -> list[Issue]:
 def build_script(params: EPParams, ctx: ScriptContext) -> str:
     geo, model, timing, out, num = (params.geometry, params.model, params.timing,
                                     params.outputs, params.numerics)
-    slab = geo.source == "slab"
     eikonal = model.solver in ("eikonal", "re_plus")
     groups = common.ordered_groups(params.cells)
     title = ctx.run_name or "Electrophysiology run"
@@ -344,10 +263,8 @@ def build_script(params: EPParams, ctx: ScriptContext) -> str:
         g.info.label + (f", {common.CELL_TYPES[g.cell_type].lower()}" if g.info.cell_types else "")
         + (f" (regions {', '.join(map(str, g.regions))})" if g.regions else "")
         for g in groups)
-    where = (f"the built-in slab ({geo.length:g} × {geo.width:g} × {geo.thickness:g} mm, "
-             f"dx {geo.dx:g} mm)" if slab else "the mesh of the input folder")
     script = codegen.Script(codegen.docstring(
-        title, f"Electrophysiology · {VARIANTS[model.solver]} on {where}.", ctx,
+        title, f"Electrophysiology · {VARIANTS[model.solver]} on the mesh of the input folder.", ctx,
         [f"Cell model: {cells_label}.",
          f"{timing.duration:g} ms simulated at dt = {timing.dt:g} ms, Vm saved every "
          f"{timing.snapshot_interval:g} ms."]))
@@ -367,11 +284,8 @@ def build_script(params: EPParams, ctx: ScriptContext) -> str:
     s.add("SNAPSHOT_INTERVAL", codegen.lit(float(timing.snapshot_interval)),
           "ms between saved Vm frames")
     codegen.output_settings(script)
-    if slab:
-        s.add("MESH_DIR", 'HERE / "mesh"', "the generated slab")
-    else:
-        s.add("MESH_DIR", codegen.path(ctx.input_dir or ".", ctx.windows),
-              "openCARP mesh (.pts, .elem, .lon) and .vtx sites")
+    s.add("MESH_DIR", codegen.path(ctx.input_dir or ".", ctx.windows),
+          "the mesh (.pts, .elem, .lon) and .vtx sites")
 
     # 1. set up ---------------------------------------------------------------------------
     script.step("Set up", "setup", "Setting up")
@@ -391,15 +305,6 @@ def build_script(params: EPParams, ctx: ScriptContext) -> str:
 
     # 2. mesh -----------------------------------------------------------------------------
     script.step("Mesh and tissue", "mesh", "Preparing the mesh")
-    if slab:
-        script.comment(f"Benchmark slab after Niederer et al. (2011): {geo.length:g} × "
-                       f"{geo.width:g} × {geo.thickness:g} mm with fibres along x; stimulus.vtx "
-                       f"is the {geo.corner:g} mm cube at the origin, left_face.vtx the x = 0 face.")
-        script.code(codegen.call(
-            "studio.make_slab_mesh", "MESH_DIR",
-            lengths=codegen.lit((float(geo.length), float(geo.width), float(geo.thickness))),
-            dx=codegen.lit(float(geo.dx)), corner=codegen.lit(float(geo.corner))))
-        script.blank()
     kwargs = {"T": "DURATION", "dt": "DT"}
     if eikonal:
         kwargs["diffusion"] = codegen.lit(model.solver == "re_plus")
@@ -407,7 +312,7 @@ def build_script(params: EPParams, ctx: ScriptContext) -> str:
         kwargs["mass_lumping"] = "True"
     kwargs.update(device="DEVICE", dtype="DTYPE")
     script.code(codegen.call(solver_class, "CELLS", prefix="simulator = ", **kwargs))
-    unit = 1000 if slab else geo.unit_conversion
+    unit = geo.unit_conversion
     unit_text = codegen.lit(int(unit) if float(unit).is_integer() else float(unit))
     script.code(f"simulator.load_mesh(MESH_DIR, unit_conversion={unit_text})"
                 + ("  # .pts in µm -> mm" if unit == 1000 else ""))
@@ -496,8 +401,7 @@ SPEC = register(SimulationSpec(
     title="Electrophysiology",
     tagline="Monodomain or reaction–eikonal activation of tissue",
     description="Simulate the spread of electrical activation through cardiac tissue with a "
-                "cell model of your choice, from the built-in benchmark slab to whole "
-                "ventricles. Produces Vm movies, activation and repolarisation maps.",
+                "cell model of your choice, on atria or whole ventricles. Produces Vm movies, activation and repolarisation maps.",
     icon="zap",
     params_model=EPParams,
     build_script=build_script,

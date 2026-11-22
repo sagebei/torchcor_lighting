@@ -3,9 +3,9 @@
 A *draft* tab sets up a new simulation of the kind chosen in the New menu, named after it
 (EP, EP_1, …); it is listed in the sidebar where it will be filed (its project, or
 "Drafts") and becomes the run's tab once launched. A simulation's name is on its tab and
-its sidebar entry, and either can be edited in place. Opening a run from the sidebar uses
-a *preview* tab that the next run replaces, unless it is kept (the tab's "Keep open", or
-"Open" in the run's menu).
+its sidebar entry, and either can be edited in place. A run opened from the sidebar gets a
+tab of its own (or its tab comes to the front). With every tab closed, the panel offers to
+start a new simulation.
 """
 
 from __future__ import annotations
@@ -246,21 +246,13 @@ class MainWindow(QMainWindow):
         page.deleted.connect(lambda pg=page: self._close_tab(pg, ask=False))
         return page
 
-    def show_run(self, record: RunRecord, tab: str | None = None, keep: bool = False) -> None:
-        """Show a run in its tab: the preview tab, unless ``keep`` (or it has its own)."""
+    def show_run(self, record: RunRecord, tab: str | None = None) -> None:
+        """Show a run in its own tab, opened the first time."""
         latest = self.ctx.record(record.key) or record
         page = self.workspace.find("run", latest.key)
         if page is None:
-            page = None if keep else self.workspace.preview_page()
-            icon = kinds.icon(latest.kind)
-            if page is not None:
-                self.workspace.set_key(page, latest.key)
-                self.workspace.set_title(page, latest.name, icon)
-            else:
-                page = self._make_run_page()
-                self.workspace.add(page, "run", latest.name, icon, key=latest.key, preview=not keep, focus=False)
-        if keep:
-            self.workspace.set_preview(page, False)
+            page = self._make_run_page()
+            self.workspace.add(page, "run", latest.name, kinds.icon(latest.kind), key=latest.key, focus=False)
         self.workspace.focus(page)
         page.show_record(latest, tab=tab)
         self.sidebar.select(latest.key)
@@ -309,8 +301,6 @@ class MainWindow(QMainWindow):
             page.deleteLater()
         if kind == "draft":
             self._sync_drafts()
-        if not self.workspace.pages():
-            self.show_new_run()  # never an empty window
 
     def _rename_entry(self, key: str, name: str) -> None:
         """A name typed in the sidebar: the same rename as on the tab."""
@@ -398,7 +388,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ actions
     def _run_action(self, action: str, record: RunRecord) -> None:
         if action == "open":
-            self.show_run(record, keep=True)
+            self.show_run(record)
         elif action == "duplicate":
             self.duplicate(record)
         elif action == "rename":
