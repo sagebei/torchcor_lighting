@@ -63,11 +63,11 @@ def pytest_unconfigure(config) -> None:  # noqa: ANN001
     a passing run into exit code 139."""
     from PySide6.QtWidgets import QApplication
 
+    from torchcor_studio.app import leave
+
     status = config.stash.get(_EXIT_STATUS, None)
     if status is not None and QApplication.instance() is not None:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(status)
+        leave(status)
 
 
 @pytest.fixture

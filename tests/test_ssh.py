@@ -19,7 +19,7 @@ import paramiko
 import pytest
 from keyring.backend import KeyringBackend
 from paramiko import SFTPAttributes, SFTPHandle, SFTPServer, SFTPServerInterface
-from tests.fixtures.packages import TORCHCOR_READY
+from tests.fixtures.host import TORCHCOR_READY
 
 from torchcor_studio.core import environment, secrets
 from torchcor_studio.core.machines import create_machine, sshconfig
@@ -152,7 +152,8 @@ def test_scan_finds_every_kind_of_environment_and_ranks_them(tmp_path):
     _fake_python(home / "project/.venv/bin/python", "3.12.4", torch="2.7.1+cu128", cuda="12.8",
                  torchcor="1.9.0")
     env = {"HOME": str(home), "PATH": f"{bin_dir}:/usr/bin:/bin"}
-    found = environment.rank_pythons(environment.parse_scan(_sh(environment._remote_scan_script(), env=env).stdout))
+    scanned = environment.rank_pythons(environment.parse_scan(_sh(environment._remote_scan_script(), env=env).stdout))
+    found = [c for c in scanned if c.path.startswith(str(tmp_path))]  # /usr/bin may hold a real one too
     paths = [c.path for c in found]
     assert paths == [str(home / "project/.venv/bin/python"),  # TorchCor + CUDA PyTorch
                      str(home / "miniconda3/envs/cpu/bin/python"),  # TorchCor, CPU only

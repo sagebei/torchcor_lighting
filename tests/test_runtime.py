@@ -65,7 +65,7 @@ def _make_run(root: Path, script: str, name: str = "run-a") -> Path:
     run_dir = root / name
     run_dir.mkdir(parents=True)
     (run_dir / rt.SCRIPT).write_text(script)
-    (run_dir / "tcs_runtime.py").write_text(Path(RUNTIME).read_text())
+    (run_dir / "tcs_runtime.py").write_text(Path(RUNTIME).read_text(encoding="utf-8"), encoding="utf-8")
     (run_dir / rt.MANIFEST).write_text(json.dumps({"id": name, "name": name, "kind": "ep",
                                                    "created_at": time.time()}))
     (run_dir / rt.STATUS).write_text(json.dumps({"state": "queued", "updated_at": time.time()}))
@@ -211,7 +211,7 @@ def test_preview_extracts_surface_and_sites(tmp_path: Path) -> None:
     _write_mesh(tmp_path / "mesh")
     # the deployed layout: tcs_runtime.py and tcs_studio.py side by side
     for name in ("tcs_runtime.py", "tcs_studio.py"):
-        (tmp_path / name).write_text(runtime_path(name).read_text())
+        (tmp_path / name).write_text(runtime_path(name).read_text(encoding="utf-8"), encoding="utf-8")
     out = subprocess.run([sys.executable, str(tmp_path / "tcs_runtime.py"), "preview",
                           str(tmp_path / "mesh"), str(tmp_path / "p.npz")],
                          capture_output=True, text=True, timeout=120)

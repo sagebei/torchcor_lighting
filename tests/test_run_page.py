@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+from tests.fixtures.host import offscreen_windows_text
 from tests.fixtures.synthetic_bundles import write_ecg_bundle, write_mechanics_bundle
 
 pytestmark = pytest.mark.gui
@@ -64,6 +65,7 @@ def test_switching_completed_runs_reloads_results(themed, qtbot, tmp_path: Path)
     ctx.shutdown()
 
 
+@offscreen_windows_text
 def test_stage_labels_fit_the_tracker(themed, qtbot) -> None:
     """Every kind's stage labels show whole (no "…") in the Progress card of the narrowest
     window (its tracker is about 430 px wide; 400 here, for wider system fonts)."""

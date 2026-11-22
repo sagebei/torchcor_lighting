@@ -16,7 +16,7 @@ import psutil
 import pytest
 from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
-from tests.fixtures.packages import TORCHCOR_READY
+from tests.fixtures.host import TORCHCOR_READY
 
 from torchcor_studio.core import environment, secrets
 from torchcor_studio.core.machines import create_machine

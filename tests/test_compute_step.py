@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from tests.fixtures.host import offscreen_windows_text
 
 pytestmark = pytest.mark.gui
 
@@ -50,7 +51,7 @@ def test_environment_card_explains_gpus_this_python_cannot_use(themed, qtbot) ->
     assert card.message.text().startswith("TorchCor 0.1.6 is older than this app supports (1.9 or newer)")
 
 
-@pytest.mark.parametrize("kind", ["sticky", "grid"])
+@pytest.mark.parametrize("kind", ["sticky", pytest.param("grid", marks=offscreen_windows_text)])
 def test_responsive_layouts_follow_children_that_grow(themed, qtbot, kind: str) -> None:
     """A card whose wrapped text grows must not stay clipped at its first height."""
     from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget

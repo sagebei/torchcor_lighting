@@ -71,13 +71,26 @@ def main(argv: list[str] | None = None) -> NoReturn:
     code = app.exec()
     collector.stop()
     tasks.shutdown()
-    # Everything is saved by now (MainWindow.closeEvent). Leave without the interpreter's
-    # teardown: PySide would destroy the Qt objects still alive, pyqtgraph's context menus
-    # among them, in no safe order and segfault ("quit unexpectedly" on macOS). Leaving at
-    # once is also the fastest quit.
+    # Everything is saved by now (MainWindow.closeEvent).
     logging.shutdown()
+    leave(code)
+
+
+def leave(code: int) -> NoReturn:
+    """End the process at once, without the interpreter's teardown: PySide would destroy the
+    Qt objects still alive, pyqtgraph's context menus among them, in no safe order and
+    segfault ("quit unexpectedly" on macOS). Leaving at once is also the fastest quit.
+
+    On Windows even ``os._exit`` runs each DLL's unload code, where Qt's can crash (an access
+    violation), so the process is terminated outright there.
+    """
     sys.stdout.flush()
     sys.stderr.flush()
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.TerminateProcess(kernel32.GetCurrentProcess(), code)
     os._exit(code)
 
 

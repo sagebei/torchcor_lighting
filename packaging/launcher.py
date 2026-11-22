@@ -458,9 +458,11 @@ def main() -> int:
 
     multiprocessing.freeze_support()  # no-op unless a library spawns worker processes
     prepare_environment()
-    if os.environ.get("TCS_SMOKE_TEST"):
-        return _smoke_test()
+    from torchcor_studio.app import leave
     from torchcor_studio.app import main as app_main
+
+    if os.environ.get("TCS_SMOKE_TEST"):
+        leave(_smoke_test())  # no interpreter teardown, as the app quits
 
     if os.environ.get("TCS_SMOKE_GUI"):  # build.py: report start-up errors instead of a dialog
         try:

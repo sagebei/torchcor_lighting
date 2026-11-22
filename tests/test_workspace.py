@@ -95,11 +95,11 @@ def test_new_simulations_are_named_after_their_kind() -> None:
     assert next_name("mechanics", []) == "MECH" and next_name("script", ["PY"]) == "PY_1"
 
 
-def test_the_new_menu_starts_a_simulation_of_the_kind_chosen(window, qtbot) -> None:
+def test_the_new_menu_starts_a_simulation_of_the_kind_chosen(window, qtbot, monkeypatch) -> None:
     """New lists the five kinds beside the sidebar (on a click, from Ctrl+N, or when the
     pointer rests on it); choosing one opens a simulation of that kind, named after it."""
     from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-    from PySide6.QtGui import QCursor, QEnterEvent, QMouseEvent
+    from PySide6.QtGui import QEnterEvent, QMouseEvent
     from PySide6.QtWidgets import QApplication
 
     from torchcor_studio.core.simulations import get_spec
@@ -131,15 +131,18 @@ def test_the_new_menu_starts_a_simulation_of_the_kind_chosen(window, qtbot) -> N
     mech = win.workspace.current()
     assert mech.setup.kind == "mechanics" and mech.name() == "MECH" and mech.project_id() == project.id
 
+    from torchcor_studio.ui import new_menu
+
     centre = button.mapToGlobal(button.rect().center())
+    pointer = [centre]  # where New sees the pointer: not every CI machine lets a test move the real one
+    monkeypatch.setattr(new_menu, "QCursor", type("Pointer", (), {"pos": staticmethod(lambda: pointer[0])}))
     # The menus above closed wherever the platform left the pointer (on New, it would keep the
     # button from reopening): a pointer that comes to rest on New has left it first.
     QApplication.sendEvent(button, QEvent(QEvent.Type.Leave))
-    QCursor.setPos(centre)  # the pointer rests on New: the menu opens...
     QApplication.sendEvent(button, QEnterEvent(QPointF(button.rect().center()), QPointF(centre), QPointF(centre)))
-    qtbot.waitUntil(menu.isVisible, timeout=3000)
+    qtbot.waitUntil(menu.isVisible, timeout=3000)  # the pointer rests on New: the menu opens...
     away = QPoint(centre.x() + 900, centre.y() + 600)
-    QCursor.setPos(away)  # ...and closes once the pointer has gone elsewhere
+    pointer[0] = away  # ...and closes once the pointer has gone elsewhere
     QApplication.sendEvent(menu, QMouseEvent(QEvent.Type.MouseMove, QPointF(menu.mapFromGlobal(away)),
                                              QPointF(away), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
                                              Qt.KeyboardModifier.NoModifier))
