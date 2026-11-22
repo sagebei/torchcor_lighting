@@ -11,6 +11,9 @@ Outputs (next to the source PNG, in ``src/torchcor_studio/resources/``):
   (Windows, Linux) Pillow's ICNS writer is used instead.
 * ``app_icon.ico`` (Windows) -- 16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 px.
 
+The Linux .deb's PNG icons (16 to 512 px) are resized from the same PNG when
+``build.py`` packages it (``make_hicolor``); they are not kept in the repository.
+
 The source is a 1024 x 1024 rounded tile drawn on Apple's icon grid (transparent
 margin around the tile). macOS expects that margin, so the ``.icns`` uses the image
 as is. Windows icons conventionally fill their square, so the ``.ico`` is cropped to
@@ -39,6 +42,7 @@ ICO = RESOURCES / "app_icon.ico"
 #: (point size, scale) pairs of a complete macOS .iconset.
 ICONSET = [(pt, scale) for pt in (16, 32, 128, 256, 512) for scale in (1, 2)]
 ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
+HICOLOR_SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
 
 
 def _load(path: Path) -> Image.Image:
@@ -96,6 +100,16 @@ def make_ico(image: Image.Image, out: Path = ICO) -> None:
     frames = {px: _resized(tile, px) for px in ICO_SIZES}
     frames[256].save(out, format="ICO", sizes=[(px, px) for px in ICO_SIZES],
                      append_images=[frames[px] for px in ICO_SIZES if px != 256])
+
+
+def make_hicolor(theme: Path, name: str) -> None:
+    """``<theme>/<px>x<px>/apps/<name>.png`` for each of HICOLOR_SIZES (the Linux .deb's
+    icons). The image as is: freedesktop icons keep a margin around the tile too."""
+    image = _load(SOURCE)
+    for px in HICOLOR_SIZES:
+        folder = theme / f"{px}x{px}" / "apps"
+        folder.mkdir(parents=True, exist_ok=True)
+        _resized(image, px).save(folder / f"{name}.png", optimize=True)
 
 
 def stale(target: Path, source: Path = SOURCE) -> bool:

@@ -3,18 +3,22 @@
 
     python packaging/build.py                # icons if missing -> PyInstaller -> checks
     python packaging/build.py --clean        # from scratch (PyInstaller cache, build/, old bundle)
-    python packaging/build.py --archive      # ... and the release artifact in dist/
+    python packaging/build.py --archive      # ... and the release files in dist/
 
 Run it with the Python environment that has the app's dependencies and PyInstaller
 (``pip install -e ".[dev]"``) -- never one you would mind seeing frozen: torch and
 torchcor are refused, everything else that the app imports is bundled.
 
-Release artifacts (``dist/``, each with a ``.sha256`` file):
+Release files (``dist/``, each with a ``.sha256`` file):
 
 * macOS    ``TorchCor-Lighting-<version>-macos-<arch>.dmg``  (zip when hdiutil fails)
-* Windows  ``TorchCor-Lighting-<version>-windows-<arch>.zip``
-* Linux    ``TorchCor-Lighting-<version>-linux-<arch>.tar.gz`` (with the .desktop file,
-  the icon and ``install.sh``, which adds a menu entry for the current user)
+* Windows  ``TorchCor-Lighting-<version>-windows-<arch>-setup.exe`` (Inno Setup 6: for the
+  current user without administrator rights, or for all users), and the same app as a
+  portable ``.zip``
+* Linux    ``TorchCor-Lighting-<version>-linux-<arch>.deb`` (Debian / Ubuntu: installs to
+  /opt/torchcor-lighting with a menu entry and ``torchcor-lighting`` on the PATH), and
+  a portable ``.tar.gz`` (with the .desktop file, the icon and ``install.sh``, which adds a
+  menu entry for the current user)
 
 Checks after building:
 
@@ -26,6 +30,11 @@ Checks after building:
    that on machines without OpenGL) and exercises keyring, SSH crypto and Qt plugins.
 3. launch -- the real GUI starts offscreen and must still be running, without
    errors, after ``--launch-seconds``.
+4. installers (with ``--archive``) -- the .deb is unpacked into a temporary folder and
+   the self-test runs through its ``usr/bin`` link; every library the bundle takes from
+   the system must be on this machine and in the package's Depends. The Windows setup
+   is tested with ``--test-installer`` only, because that installs it (into a temporary
+   folder, for the current user), self-tests the installed app and uninstalls it.
 """
 
 from __future__ import annotations
@@ -33,7 +42,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import platform
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +60,7 @@ SPEC = appinfo.HERE / "torchcor_studio.spec"
 DIST = appinfo.ROOT / "dist"
 WORK = appinfo.ROOT / "build" / "pyinstaller"
 LINUX_DIR = appinfo.HERE / "linux"
+INNO_SCRIPT = appinfo.HERE / "windows" / "installer.iss"
 ERROR_MARKERS = ("Traceback (most recent call last)", "ModuleNotFoundError", "ImportError:",
                  "FileNotFoundError", "Failed to execute script", "Unhandled exception")
 
@@ -397,19 +409,271 @@ def archive_linux(paths: dict[str, Path]) -> Path:
     return archive
 
 
-def make_archive(paths: dict[str, Path]) -> Path:
+# ----------------------------------------------------------------------------- Windows installer
+def _iscc() -> Path:
+    """Inno Setup 6's compiler: on the PATH, or where its installer puts it."""
+    found = shutil.which("iscc")
+    if found:
+        return Path(found)
+    local, program_files = os.environ.get("LOCALAPPDATA"), os.environ.get("PROGRAMFILES")
+    # bash (CI) does not pass on ProgramFiles(x86): its name is not a valid shell variable
+    bases = [os.environ.get("PROGRAMFILES(X86)"), program_files and f"{program_files} (x86)",
+             program_files, local and os.path.join(local, "Programs")]
+    for base in filter(None, bases):
+        candidate = Path(base) / "Inno Setup 6" / "ISCC.exe"
+        if candidate.is_file():
+            return candidate
+    raise BuildError("Inno Setup 6 is not installed (https://jrsoftware.org/isdl.php, or: choco install innosetup)")
+
+
+def installer_windows(paths: dict[str, Path]) -> Path:
+    step("Windows installer (Inno Setup)")
+    name = f"{appinfo.artifact_stem()}-setup"
+    setup = DIST / f"{name}.exe"
+    setup.unlink(missing_ok=True)
+    defines = {
+        "AppName": appinfo.APP_NAME,
+        "AppVersion": appinfo.version(),
+        "FileVersion": ".".join(map(str, appinfo.version_tuple())),
+        "Publisher": appinfo.PUBLISHER,
+        "Copyright": appinfo.COPYRIGHT,
+        "ExeName": paths["exe"].name,
+        "SourceDir": str(paths["bundle"]),
+        "OutputDir": str(DIST),
+        "OutputName": name,
+        "IconFile": str(appinfo.RESOURCES / "app_icon.ico"),
+        "Architectures": {"x64": "x64compatible"}.get(appinfo.arch(), appinfo.arch()),
+    }
+    cmd = [str(_iscc()), "/Q", *(f"/D{key}={value}" for key, value in defines.items()), str(INNO_SCRIPT)]
+    started = time.monotonic()
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0 or not setup.is_file():
+        raise BuildError(f"Inno Setup failed (exit code {result.returncode})")
+    print(f"{rel(setup)} compiled in {time.monotonic() - started:.0f} s")
+    return setup
+
+
+def test_installer_windows(setup: Path, exe_name: str, render: bool) -> None:
+    step("Install, self-test and uninstall the Windows setup")
+    with tempfile.TemporaryDirectory(prefix="tcs-setup-", ignore_cleanup_errors=True) as tmp:
+        base = Path(tmp)
+        target, log = base / "app", base / "setup.log"
+        installed = target / exe_name
+        try:
+            result = subprocess.run([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER",
+                                     f"/DIR={target}", f"/LOG={log}"], timeout=600, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise BuildError("the setup did not finish within 600 s") from exc
+        if result.returncode != 0 or not installed.is_file():
+            if log.is_file():
+                print(log.read_text(encoding="utf-8", errors="replace")[-4000:])
+            raise BuildError(f"the setup failed (exit code {result.returncode})")
+        print(f"ok    installed for the current user into {target}")
+        try:
+            smoke = base / "smoke"
+            smoke.mkdir()
+            self_test({"exe": installed}, smoke, render)
+        finally:
+            subprocess.run([str(target / "unins000.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                           timeout=120, check=False)
+            # The uninstaller hands over to a copy of itself in %TEMP% and returns at once.
+            deadline = time.monotonic() + 120
+            while installed.exists() and time.monotonic() < deadline:
+                time.sleep(1)
+        if installed.exists():
+            raise BuildError("the uninstaller left the app behind")
+        print("ok    uninstalled")
+
+
+# ----------------------------------------------------------------------------- Debian package
+def _is_elf(path: Path) -> bool:
+    with open(path, "rb") as fh:
+        return fh.read(4) == b"\x7fELF"
+
+
+def _system_libraries(bundle: Path) -> dict[str, set[str]]:
+    """``{library: names of the bundled files that need it}`` for each library that the
+    bundle loads from the system; ``"<name> (not found)"`` for those missing here. Resolved
+    as at run time: the bootloader puts ``_internal`` first on the library path."""
+    bundle = bundle.resolve()
+    elves = [str(p) for p in sorted(bundle.rglob("*")) if p.is_file() and not p.is_symlink() and _is_elf(p)]
+    env = dict(os.environ, LD_LIBRARY_PATH=str(bundle / "_internal"))
+    found: dict[str, set[str]] = {}
+    for start in range(0, len(elves), 200):
+        group = elves[start:start + 200]
+        out = subprocess.run(["ldd", *group], env=env, capture_output=True, text=True, check=False).stdout
+        current = group[0]  # ldd names each file only when given several
+        for line in out.splitlines():
+            if not line.startswith("\t"):
+                current = line.rstrip(":")
+                continue
+            name, _, target = line.strip().partition(" => ")
+            target = target.split(" (")[0].strip()
+            if not target:
+                continue  # linux-vdso, the dynamic loader
+            if target == "not found":
+                target = f"{name} (not found)"
+            elif bundle in Path(target).resolve().parents:
+                continue
+            found.setdefault(target, set()).add(Path(current).name)
+    return found
+
+
+def _debian_package(library: str) -> str | None:
+    for path in dict.fromkeys((library, os.path.realpath(library))):  # usrmerge: /lib -> /usr/lib
+        result = subprocess.run(["dpkg", "-S", path], capture_output=True, text=True, check=False)
+        if result.returncode == 0:  # "libgl1:amd64: /usr/lib/x86_64-linux-gnu/libGL.so.1"
+            return result.stdout.split(":", 1)[0].split(",")[0].strip()
+    return None
+
+
+def check_system_libraries(bundle: Path, depends: list[str]) -> None:
+    step("System libraries of the Linux bundle")
+    allowed = {entry.split()[0] for entry in depends}
+    problems, packages = [], {}
+    for library, users in sorted(_system_libraries(bundle).items()):
+        if library.endswith("(not found)"):
+            problems.append(f"{library}, needed by {', '.join(sorted(users)[:3])}: install it on the build "
+                            "machine so that PyInstaller bundles it")
+        else:
+            packages.setdefault(_debian_package(library), set()).add(Path(library).name)
+    for package, libraries in sorted(packages.items(), key=lambda item: item[0] or ""):
+        if package in allowed:
+            print(f"ok    {package}: {', '.join(sorted(libraries))}")
+        else:
+            problems.append(f"{', '.join(sorted(libraries))} (package {package or 'unknown'}) "
+                            "is not in appinfo.DEB_DEPENDS")
+    if problems:
+        raise BuildError("system libraries:\n  " + "\n  ".join(problems))
+
+
+def _debian_version(version: str) -> str:
+    """PEP 440 -> Debian: ``1.2.0rc1`` -> ``1.2.0~rc1``, which sorts before ``1.2.0``."""
+    return re.sub(r"[.-]?((?:a|b|rc|dev)\d+)", r"~\1", version)
+
+
+def _normalise_modes(root: Path) -> None:
+    """Folders 755, files 755 when executable and 644 otherwise (symlinks untouched)."""
+    for folder, _dirs, files in os.walk(root):
+        os.chmod(folder, 0o755)
+        for name in files:
+            path = os.path.join(folder, name)
+            if not os.path.islink(path):
+                os.chmod(path, 0o755 if os.stat(path).st_mode & 0o111 else 0o644)
+
+
+def installer_linux(paths: dict[str, Path]) -> Path:
+    dpkg_deb = shutil.which("dpkg-deb")
+    if dpkg_deb is None:
+        raise BuildError("dpkg-deb not found: build the .deb on Debian or Ubuntu")
+    glibc = platform.libc_ver()[1]
+    depends = [f"libc6 (>= {glibc})", *appinfo.DEB_DEPENDS]
+    check_system_libraries(paths["bundle"], depends)
+
+    step("Debian package")
+    import make_icons
+
+    name = appinfo.LINUX_NAME
+    root = WORK / "deb"
+    if root.exists():
+        shutil.rmtree(root)
+    shutil.copytree(paths["bundle"], root / "opt" / name, symlinks=True)
+    (root / "usr" / "bin").mkdir(parents=True)
+    # relative, so that it also resolves in a package unpacked anywhere (check_deb)
+    (root / "usr" / "bin" / name).symlink_to(Path("../../opt") / name / paths["exe"].name)
+    share = root / "usr" / "share"
+    (share / "applications").mkdir(parents=True)
+    shutil.copy2(appinfo.RESOURCES / f"{name}.desktop", share / "applications" / f"{name}.desktop")
+    make_icons.make_hicolor(share / "icons" / "hicolor", name)
+    (share / "doc" / name).mkdir(parents=True)
+    shutil.copy2(appinfo.ROOT / "LICENSE", share / "doc" / name / "copyright")
+    _normalise_modes(root)
+
+    fields = {
+        "Package": name,
+        "Version": _debian_version(appinfo.version()),
+        "Architecture": {"x86_64": "amd64", "aarch64": "arm64"}.get(appinfo.arch(), appinfo.arch()),
+        "Maintainer": appinfo.PUBLISHER,
+        "Installed-Size": str((tree_size(root) + 1023) // 1024),  # KiB
+        "Depends": ", ".join(depends),
+        "Section": "science",
+        "Priority": "optional",
+        "Description": f"{appinfo.SYNOPSIS}\n {appinfo.description()}",
+    }
+    control = root / "DEBIAN" / "control"
+    control.parent.mkdir(mode=0o755)
+    control.write_text("".join(f"{key}: {value}\n" for key, value in fields.items()), encoding="utf-8")
+    control.chmod(0o644)
+
+    deb = DIST / f"{appinfo.artifact_stem()}.deb"
+    deb.unlink(missing_ok=True)
+    started = time.monotonic()
+    result = subprocess.run([dpkg_deb, "--root-owner-group", "-Zxz", "--build", str(root), str(deb)], check=False)
+    shutil.rmtree(root, ignore_errors=True)
+    if result.returncode != 0 or not deb.is_file():
+        raise BuildError(f"dpkg-deb failed (exit code {result.returncode})")
+    print(f"{rel(deb)} built in {time.monotonic() - started:.0f} s")
+    return deb
+
+
+def check_deb(deb: Path, run: bool, render: bool) -> None:
+    step("Check the Debian package")
+    print(subprocess.run(["dpkg-deb", "--field", str(deb)], capture_output=True, text=True, check=True).stdout.rstrip())
+    name = appinfo.LINUX_NAME
+    with tempfile.TemporaryDirectory(prefix="tcs-deb-") as tmp:
+        base = Path(tmp)
+        root = base / "root"
+        subprocess.run(["dpkg-deb", "--extract", str(deb), str(root)], check=True)
+        desktop = root / "usr" / "share" / "applications" / f"{name}.desktop"
+        validate = shutil.which("desktop-file-validate")
+        if validate:
+            result = subprocess.run([validate, str(desktop)], capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                raise BuildError(f"{desktop.name}:\n{result.stdout}{result.stderr}")
+            print(f"ok    {desktop.name} is valid" + (f"\n{result.stdout.rstrip()}" if result.stdout.strip() else ""))
+        else:
+            print(f"note  desktop-file-validate not found: {desktop.name} not validated")
+        exe = root / "usr" / "bin" / name
+        if not (exe.is_symlink() and exe.resolve().is_file()):
+            raise BuildError(f"usr/bin/{name} does not lead to the app")
+        print(f"ok    usr/bin/{name} -> {os.readlink(exe)}")
+        if run:
+            smoke = base / "smoke"
+            smoke.mkdir()
+            self_test({"exe": exe}, smoke, render)
+
+
+# ----------------------------------------------------------------------------- release files
+def make_artifacts(paths: dict[str, Path], run: bool, render: bool, test_installer: bool) -> list[Path]:
     step("Release archive")
     archive = (archive_macos if appinfo.IS_MAC else archive_windows if appinfo.IS_WIN else archive_linux)(paths)
-    _write_checksum(archive)
-    print(f"{rel(archive)}: {human(archive.stat().st_size)} (+ .sha256)")
-    return archive
+    print(f"{rel(archive)}")
+    artifacts = [archive]
+    if appinfo.IS_WIN:
+        setup = installer_windows(paths)
+        if test_installer and run:
+            test_installer_windows(setup, paths["exe"].name, render)
+        artifacts.append(setup)
+    elif appinfo.IS_LINUX:
+        deb = installer_linux(paths)
+        check_deb(deb, run, render)
+        artifacts.append(deb)
+    step("Release files")
+    for artifact in artifacts:
+        _write_checksum(artifact)
+        print(f"{rel(artifact)}: {human(artifact.stat().st_size)} (+ .sha256)")
+    return artifacts
 
 
 # ----------------------------------------------------------------------------- main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build and check the TorchCor Lighting desktop app.")
     parser.add_argument("--clean", action="store_true", help="remove previous build output and PyInstaller's cache first")
-    parser.add_argument("--archive", action="store_true", help="create the release artifact (dmg / zip / tar.gz)")
+    parser.add_argument("--archive", action="store_true",
+                        help="create the release files (dmg / setup.exe and zip / deb and tar.gz)")
+    parser.add_argument("--test-installer", action="store_true",
+                        help="Windows: install the setup into a temporary folder for the current user, "
+                             "self-test the installed app and uninstall it")
     parser.add_argument("--skip-build", action="store_true", help="check (and archive) the existing bundle in dist/")
     parser.add_argument("--no-run", action="store_true", help="do not run the frozen app (layout checks only)")
     parser.add_argument("--no-render", action="store_true", help="self-test without the off-screen VTK render")
@@ -435,15 +699,16 @@ def main(argv: list[str] | None = None) -> int:
                 self_test(paths, base, render=not args.no_render)
                 launch_test(paths, base, args.launch_seconds)
         size = report_size(paths)
-        archive = make_archive(paths) if args.archive else None
+        artifacts = (make_artifacts(paths, run=not args.no_run, render=not args.no_render,
+                                    test_installer=args.test_installer) if args.archive else [])
     except BuildError as exc:
         print(f"\nBUILD FAILED: {exc}", file=sys.stderr)
         return 1
     step("Done")
     print(f"bundle   {paths['bundle']}  ({human(size)})")
     print(f"run      {paths['exe']}")
-    if archive:
-        print(f"artifact {archive}")
+    for artifact in artifacts:
+        print(f"artifact {artifact}")
     return 0
 
 

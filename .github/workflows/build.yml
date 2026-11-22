@@ -4,7 +4,9 @@
 # Each job: install the app with its dependencies (never torch / torchcor -- simulations
 # run in a separate Python on the compute machine), run the fast tests, then
 # `python packaging/build.py --archive`, which freezes the app with PyInstaller,
-# self-tests the frozen bundle and writes the installer + .sha256 into dist/.
+# self-tests the frozen bundle and writes the release files + .sha256 into dist/:
+# macOS a .dmg; Windows a setup .exe (Inno Setup, installed, self-tested and uninstalled
+# here) and a portable .zip; Linux a .deb (unpacked and self-tested here) and a .tar.gz.
 
 name: Build
 
@@ -32,7 +34,7 @@ jobs:
           - name: Windows x64
             os: windows-latest
             # Hosted Windows runners have no OpenGL 3.2 driver: skip the VTK render check.
-            build-args: --no-render
+            build-args: --no-render --test-installer
           - name: macOS arm64
             os: macos-15
           - name: macOS x64
@@ -79,7 +81,15 @@ jobs:
             libxkbcommon0 libxkbcommon-x11-0 libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 \
             libxcb-xinerama0 libxcb-xkb1 libxrender1 libxi6 libxt6 \
-            libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0
+            libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 \
+            desktop-file-utils
+
+      - name: Install Inno Setup if the runner image lacks it
+        if: runner.os == 'Windows'
+        run: |
+          if ! command -v iscc >/dev/null && [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then
+            choco install innosetup -y --no-progress
+          fi
 
       - name: Install TorchCor Lighting (with dev tools and NVML telemetry)
         run: |
@@ -112,7 +122,9 @@ jobs:
           name: TorchCor-Lighting-${{ runner.os }}-${{ runner.arch }}
           path: |
             dist/TorchCor-Lighting-*.dmg
+            dist/TorchCor-Lighting-*.exe
             dist/TorchCor-Lighting-*.zip
+            dist/TorchCor-Lighting-*.deb
             dist/TorchCor-Lighting-*.tar.gz
             dist/TorchCor-Lighting-*.sha256
           if-no-files-found: error

@@ -24,7 +24,16 @@ BUNDLE_ID = "org.torchcor.lighting"
 #: Linux convention: a lower-case, space-free executable, matching the pip console
 #: script and ``torchcor-lighting.desktop`` (also the Wayland app id set by the app).
 LINUX_NAME = "torchcor-lighting"
-COPYRIGHT = "Copyright © 2026 TorchCor Lighting contributors. MIT License."
+PUBLISHER = "TorchCor Lighting contributors"
+COPYRIGHT = f"Copyright © 2026 {PUBLISHER}. MIT License."
+#: The Debian package's one-line synopsis (its long description is pyproject's).
+SYNOPSIS = "desktop app for TorchCor cardiac simulations"
+#: What the Linux bundle loads from the system instead of carrying: PyInstaller leaves out
+#: glibc (``libc6 (>= <the build machine's glibc>)`` is added by build.py), the OpenGL / EGL
+#: driver stack, libdrm, libxcb and Wayland, which must match the machine's drivers and
+#: display server. build.py checks the bundle against this list before making the .deb.
+DEB_DEPENDS = ("libdrm2", "libegl1", "libgl1", "libglvnd0", "libglx0", "libwayland-client0",
+               "libwayland-cursor0", "libwayland-egl1", "libxcb1")
 #: The oldest macOS the bundle may claim; raised automatically to what the bundled
 #: binaries (Qt, numpy, VTK ...) actually require.
 MACOS_MIN_FLOOR = (11, 0)
@@ -107,6 +116,13 @@ def version() -> str:
     if not match:
         raise RuntimeError("__version__ not found in src/torchcor_studio/__init__.py")
     return match.group(1)
+
+
+def description() -> str:
+    """The one-sentence description in ``pyproject.toml``."""
+    import tomllib
+
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["description"]
 
 
 def version_tuple(value: str | None = None) -> tuple[int, int, int, int]:
