@@ -56,7 +56,9 @@ EXCLUDES = [
     # optional extras of the dependencies (remote files, pretty printing, plugins ...)
     "fsspec", "aiohttp", "jinja2", "rich", "pygments", "invoke", "filelock", "tqdm",
     "pyparsing.diagram", "pydantic.mypy", "pydantic.v1.mypy", "numpy.f2py", "numpy.distutils",
-    "setuptools", "distutils", "_distutils_hack", "pkg_resources", "wheel", "tomli",
+    # (not "distutils": from Python 3.12 PyInstaller aliases it to setuptools._distutils
+    # and fails on an excluded alias; with setuptools excluded it stays out all the same)
+    "setuptools", "_distutils_hack", "pkg_resources", "wheel", "tomli",
     # Qt modules pulled in by optional imports only (qtpy's compatibility alias; PySide6's
     # Windows OpenSSL probe, guarded by try/except)
     "PySide6.QtDataVisualization", "qtpy.QtDataVisualization", "PySide6.QtNetwork",

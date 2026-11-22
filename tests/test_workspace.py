@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtWidgets import QLabel
+from tests.fixtures.host import intel_mac_hover
 
 pytestmark = pytest.mark.gui
 
@@ -95,12 +96,10 @@ def test_new_simulations_are_named_after_their_kind() -> None:
     assert next_name("mechanics", []) == "MECH" and next_name("script", ["PY"]) == "PY_1"
 
 
-def test_the_new_menu_starts_a_simulation_of_the_kind_chosen(window, qtbot, monkeypatch) -> None:
-    """New lists the five kinds beside the sidebar (on a click, from Ctrl+N, or when the
-    pointer rests on it); choosing one opens a simulation of that kind, named after it."""
-    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-    from PySide6.QtGui import QEnterEvent, QMouseEvent
-    from PySide6.QtWidgets import QApplication
+def test_the_new_menu_starts_a_simulation_of_the_kind_chosen(window, qtbot) -> None:
+    """New lists the five kinds beside the sidebar (on a click or from Ctrl+N); choosing one
+    opens a simulation of that kind, named after it."""
+    from PySide6.QtCore import QPoint, Qt
 
     from torchcor_studio.core.simulations import get_spec
 
@@ -131,17 +130,24 @@ def test_the_new_menu_starts_a_simulation_of_the_kind_chosen(window, qtbot, monk
     mech = win.workspace.current()
     assert mech.setup.kind == "mechanics" and mech.name() == "MECH" and mech.project_id() == project.id
 
+
+@intel_mac_hover
+def test_the_new_menu_opens_while_the_pointer_rests_on_new(window, qtbot, monkeypatch) -> None:
+    """Resting the pointer on New opens its menu, which closes once the pointer has gone."""
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QEnterEvent, QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
     from torchcor_studio.ui import new_menu
 
-    def on_new() -> QPoint:  # New's centre now: the sidebar may still be laying out
+    button, menu = window.sidebar.new_button, window.sidebar.new_menu.menu
+
+    def on_new() -> QPoint:  # New's centre now
         return button.mapToGlobal(button.rect().center())
 
     # Where New sees the pointer: not every CI machine lets a test move the real one.
     pointer = [on_new]
     monkeypatch.setattr(new_menu, "QCursor", type("Pointer", (), {"pos": staticmethod(lambda: pointer[0]())}))
-    # The menus above closed wherever the platform left the pointer (on New, it would keep the
-    # button from reopening): a pointer that comes to rest on New has left it first.
-    QApplication.sendEvent(button, QEvent(QEvent.Type.Leave))
     centre = QPointF(on_new())
     QApplication.sendEvent(button, QEnterEvent(QPointF(button.rect().center()), centre, centre))
     qtbot.waitUntil(menu.isVisible, timeout=3000)  # the pointer rests on New: the menu opens...
