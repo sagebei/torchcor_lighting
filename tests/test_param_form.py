@@ -318,7 +318,7 @@ def test_input_folder_issues_go_to_the_slot(themed, qtbot) -> None:
 def test_a_section_switch_keeps_its_row_and_its_settings_follow_below(themed, qtbot) -> None:
     """Pre-pacing's switch ends its row: turning it on shows its settings side by side on
     the next row, and the switch does not move. A switch that gates one field of several
-    (VTK frames: its frame step) keeps that field beside it."""
+    (VTK frames: its frame step) does not end its row: the step follows it where it fits."""
     from PySide6.QtCore import QPoint
 
     form = _form(qtbot, "ep")
@@ -329,6 +329,10 @@ def test_a_section_switch_keeps_its_row_and_its_settings_follow_below(themed, qt
 
     def top(*path: str) -> int:
         return cell(*path).mapTo(form, QPoint(0, 0)).y()
+
+    def ends_row(*path: str) -> bool:  # the grid's own rule, whatever the fonts' widths
+        grid = cell(*path).parentWidget().layout()
+        return next(entry.end for entry in grid._items if entry.item.widget() is cell(*path))
 
     def turn_on(path: tuple[str, str], shows: tuple[str, str]) -> None:
         editor = form.editor(path)
@@ -343,5 +347,4 @@ def test_a_section_switch_keeps_its_row_and_its_settings_follow_below(themed, qt
     assert top("prepace", "cycle_length") >= switch + cell("prepace", "enabled").height()  # below it
     assert top("prepace", "beats") == top("prepace", "cycle_length")  # side by side
     assert cell("prepace", "beats").x() > cell("prepace", "cycle_length").x()
-    turn_on(("outputs", "vtk"), ("outputs", "vtk_step"))
-    assert top("outputs", "vtk_step") <= top("outputs", "vtk") + cell("outputs", "vtk").height()  # beside it
+    assert ends_row("prepace", "enabled") and not ends_row("outputs", "vtk")
