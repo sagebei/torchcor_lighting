@@ -149,7 +149,8 @@ def os_tag() -> str:
 def artifact_stem() -> str:
     """``TorchCor-Lighting-macos-arm64`` (extension added by the archiver). No version: the
     same name in every release keeps ``/releases/latest/download/<name>`` a direct link to
-    the newest file, which the website's buttons use (the release itself is versioned)."""
+    the newest file, which the website's buttons use (sagebei/torchcor_website; the release
+    itself is versioned)."""
     return f"TorchCor-Lighting-{os_tag()}-{arch()}"
 
 
