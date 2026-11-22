@@ -1,6 +1,6 @@
 """TorchCor Lighting — a desktop app for GPU cardiac simulations with TorchCor."""
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 APP_NAME = "TorchCor Lighting"
 APP_ID = "TorchCorStudio"  # settings / history folders: unchanged by the rename
