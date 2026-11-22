@@ -37,6 +37,12 @@ the Windows installer (`-windows-x64-setup.exe`) and portable zip, and the Ubunt
 without any lookup; the build workflow keeps "latest" on the newest app release, so
 publish demo data releases as pre-releases (or untick "Set as the latest release").
 
+The overview's main Download button downloads the visitor's own file straight away: the
+Apple silicon dmg on a Mac (the Intel one when a Chromium browser reports an Intel Mac), the
+Windows installer, or the `.deb` on Linux (the `.tar.gz` when Firefox names a distribution
+outside Debian's family). The line under it names the file and links to the download page,
+which lists every file. Phones, ChromeOS and ARM Linux go to the download page instead.
+
 On page load, `assets/js/main.js` also asks the GitHub API for that release (tagged
 `v1.2.3`; pre-releases and the demo data releases, `data-v1.0`, are skipped) to show its
 version, date and file sizes (cached for 10 minutes). Without an answer (offline, or

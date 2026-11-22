@@ -173,6 +173,7 @@ code, pre { font-family: var(--mono); }
 .hero__lead a { color: var(--text); text-decoration: underline; text-decoration-color: rgba(255, 255, 255, 0.3); text-underline-offset: 3px; }
 .hero__cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 28px; }
 .hero__platforms { margin-top: 14px; font-size: 13px; color: var(--faint); letter-spacing: 0.02em; }
+.hero__platforms a { color: var(--blue); }
 
 /* ---------- Sections ---------- */
 .section { padding: clamp(44px, 5.5vw, 72px) 0; position: relative; }

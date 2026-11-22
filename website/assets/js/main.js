@@ -8,13 +8,14 @@
   // version, date and sizes when it answers.
   const REPO = 'sagebei/torchcor_lighting';
   const GH = `https://github.com/${REPO}`;
+  // `alt`: what the download page offers next to the file when it is the visitor's
   const FILES = {
-    'macos-arm64.dmg': { os: 'mac', label: 'macOS', detail: 'Apple silicon' },
-    'macos-x86_64.dmg': { os: 'mac', label: 'macOS', detail: 'Intel' },
-    'windows-x64-setup.exe': { os: 'windows', label: 'Windows', detail: 'Installer for Windows 10 or 11, 64-bit' },
+    'macos-arm64.dmg': { os: 'mac', label: 'macOS', detail: 'Apple silicon, macOS 14 or later', alt: 'Intel Macs' },
+    'macos-x86_64.dmg': { os: 'mac', label: 'macOS', detail: 'Intel, macOS 14 or later', alt: 'Apple silicon' },
+    'windows-x64-setup.exe': { os: 'windows', label: 'Windows', detail: 'Installer for Windows 10 or 11, 64-bit', alt: 'the portable zip' },
     'windows-x64.zip': { os: 'windows', label: 'Windows', detail: 'Portable, Windows 10 or 11, 64-bit' },
-    'linux-x86_64.deb': { os: 'linux', label: 'Linux', detail: '.deb for Ubuntu 22.04 and Debian 12 or newer' },
-    'linux-x86_64.tar.gz': { os: 'linux', label: 'Linux', detail: 'x86_64, glibc 2.35 or newer' },
+    'linux-x86_64.deb': { os: 'linux', label: 'Linux', detail: '.deb for Ubuntu 22.04 and Debian 12 or newer', alt: 'the .tar.gz for other distributions' },
+    'linux-x86_64.tar.gz': { os: 'linux', label: 'Linux', detail: 'x86_64 with glibc 2.35 or newer, any distribution', alt: 'the .deb for Ubuntu and Debian' },
   };
 
   const $ = (s, root = document) => root.querySelector(s);
@@ -44,8 +45,26 @@
     if (/Linux|X11/i.test(platform) && !/CrOS/i.test(ua)) return 'linux';
     return 'other';
   }
+  // The visitor's file: offered first on both pages and downloaded straight from the
+  // overview's hero button. None for phones, ChromeOS or ARM Linux (no build there yet).
+  function detectFile(system) {
+    const ua = navigator.userAgent || '';
+    if (system === 'mac') return 'macos-arm64.dmg'; // Intel Macs: see the check below
+    if (system === 'windows') return 'windows-x64-setup.exe'; // ARM PCs run it emulated
+    if (system !== 'linux' || /aarch64|armv\d/i.test(`${navigator.platform || ''} ${ua}`)) return null;
+    // Firefox names the distribution; only Debian's family installs a .deb
+    return /\b(Fedora|Red Hat|CentOS|SUSE|Arch Linux|Manjaro|Gentoo)\b/i.test(ua) ? 'linux-x86_64.tar.gz' : 'linux-x86_64.deb';
+  }
   const os = detectOS();
-  let primary = { mac: 'macos-arm64.dmg', windows: 'windows-x64-setup.exe', linux: 'linux-x86_64.deb' }[os] || null;
+  let primary = detectFile(os);
+
+  // Download page: make the visitor's file the filled button, first in its card.
+  function promote(key) {
+    const btn = $(`.platform [data-asset="${key}"]`);
+    if (!btn) return;
+    $$('[data-asset]', btn.parentNode).forEach((b) => b.classList.toggle('btn--ghost', b !== btn));
+    btn.parentNode.prepend(btn);
+  }
 
   /* ---------- Release ---------- */
   const release = { version: '', date: '', page: `${GH}/releases/latest`, assets: {} };
@@ -72,11 +91,25 @@
       if (a) el.textContent = a.name;
     });
 
-    // Overview page: name the visitor's platform on the hero button.
-    const heroLabel = $('[data-hero-label]');
-    if (heroLabel && primary) heroLabel.textContent = `Download for ${FILES[primary].label}`;
+    // Overview page: the hero button downloads the visitor's file; the line under it names
+    // the file and links to every other download. Phones and others keep the download page.
+    const hero = $('[data-hero-download]');
+    const heroSub = $('[data-hero-sub]');
+    if (hero && primary) {
+      const f = FILES[primary];
+      const a = release.assets[primary];
+      hero.href = link(primary);
+      $('[data-hero-label]', hero).textContent = `Download for ${f.label}`;
+      if (heroSub) {
+        heroSub.textContent = `${f.detail}${a && a.size ? ` · ${Math.round(a.size / 1e6)} MB` : ''} · `;
+        const all = document.createElement('a');
+        all.href = 'download.html';
+        all.textContent = 'All downloads';
+        heroSub.append(all);
+      }
+    }
 
-    // Download page: highlight the visitor's platform and offer it first.
+    // Download page: highlight the visitor's platform and offer its file first.
     $$('.platform').forEach((card) => card.classList.toggle('is-recommended', card.dataset.os === os));
     const box = $('[data-primary]');
     if (box && primary) {
@@ -85,28 +118,19 @@
       btn.href = link(primary);
       btn.dataset.asset = primary;
       $('[data-primary-label]', box).textContent = `Download for ${f.label}`;
-      const others = {
-        mac: primary === 'macos-arm64.dmg' ? 'Intel Macs' : 'Apple silicon',
-        windows: 'the portable zip',
-        linux: 'the .tar.gz for other distributions',
-      }[os];
-      $('[data-primary-sub]', box).textContent = `${f.detail} · Other platforms and ${others} below`;
+      $('[data-primary-sub]', box).textContent = `${f.detail} · Other platforms and ${f.alt} below`;
       box.hidden = false;
     }
   }
+
+  if (primary) promote(primary);
 
   // Chromium browsers can tell Intel Macs apart; everyone else gets Apple silicon first.
   if (os === 'mac' && navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
     navigator.userAgentData.getHighEntropyValues(['architecture']).then((v) => {
       if (v.architecture !== 'x86') return;
       primary = 'macos-x86_64.dmg';
-      const arm = $('.platform [data-asset="macos-arm64.dmg"]');
-      const intel = $('.platform [data-asset="macos-x86_64.dmg"]');
-      if (arm && intel) {
-        arm.classList.add('btn--ghost');
-        intel.classList.remove('btn--ghost');
-        intel.parentNode.prepend(intel);
-      }
+      promote(primary);
       render();
     }).catch(() => {});
   }
